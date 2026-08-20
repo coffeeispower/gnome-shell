@@ -1669,20 +1669,6 @@ export const Keyboard = GObject.registerClass({
         }
     }
 
-    _getGridSlots() {
-        let numOfHorizSlots = 0;
-        const rows = this._currentPage.get_children();
-        const numOfVertSlots = rows.length;
-
-        for (let i = 0; i < rows.length; ++i) {
-            const keyboardRow = rows[i];
-            const keys = keyboardRow.get_children();
-
-            numOfHorizSlots = Math.max(numOfHorizSlots, keys.length);
-        }
-
-        return [numOfHorizSlots, numOfVertSlots];
-    }
 
     _relayout() {
         const monitor = Main.layoutManager.keyboardMonitor;
