@@ -26,12 +26,16 @@ const KEYBOARD_REST_TIME = KEYBOARD_ANIMATION_TIME * 2;
 
 const A11Y_APPLICATIONS_SCHEMA = 'org.gnome.desktop.a11y.applications';
 const SHOW_KEYBOARD = 'screen-keyboard-enabled';
+const SHELL_SCHEMA = 'org.gnome.shell';
+const SPLIT_KEYBOARD_ENABLED = 'screen-keyboard-split-enabled';
+const SPLIT_KEYBOARD_SIDE_SIZE = 'screen-keyboard-split-side-size';
 const EMOJI_PAGE_SEPARATION = 32;
-const ENABLE_SPLIT_LAYOUT = true;
-const SPLIT_KEYBOARD_DEFAULT_SIDE_SIZE = 500;
 const SPLIT_KEYBOARD_MIN_SIDE_SIZE = 50;
 const SPLIT_KEYBOARD_MIN_GAP = 64;
 const SPLIT_KEYBOARD_HANDLE_WIDTH = 48;
+const CM = 10;
+const SIZE_OF_THUMBS_CM = 3;
+const SPLIT_KEYBOARD_MAX_REACH_MM = SIZE_OF_THUMBS_CM * 2 * CM;
 
 /* KeyContainer puts keys in a grid where a 1:1 key takes this size */
 const KEY_SIZE = 2;
@@ -240,15 +244,36 @@ class KeyContainer extends St.Widget {
     }
 });
 
-const Suggestions = GObject.registerClass(
+const Suggestions = GObject.registerClass({
+    Signals: {'settings-requested': {}},
+},
 class Suggestions extends St.BoxLayout {
     constructor() {
         super({
             style_class: 'word-suggestions',
             orientation: Clutter.Orientation.HORIZONTAL,
-            x_align: Clutter.ActorAlign.CENTER,
+            x_align: Clutter.ActorAlign.START,
         });
+        this._suggestionButtons = new Set();
+        this._suggestionsVisible = true;
+
+        this.settingsButton = new St.Button({
+            accessible_name: _('Keyboard Settings'),
+            can_focus: false,
+            icon_name: 'emblem-system-symbolic',
+            style_class: 'icon-button flat',
+        });
+        this.settingsButton.connect('clicked', () => {
+            this.emit('settings-requested');
+        });
+        this.add_child(this.settingsButton);
         this.show();
+    }
+
+    _syncSettingsButton() {
+        this.settingsButton.visible =
+        !this._suggestionsVisible || this._suggestionButtons.size === 0;
+        super.xAlign = this.settingsButton.visible ? Clutter.ActorAlign.START : Clutter.ActorAlign.CENTER;
     }
 
     /**
@@ -256,21 +281,56 @@ class Suggestions extends St.BoxLayout {
      * @param {() => void} callback
      */
     add(word, callback) {
-        const button = new St.Button({label: word});
+        const button = new St.Button({
+            label: word,
+            style_class: 'word-suggestion',
+        });
         button.connect('clicked', () => callback());
+        button.visible = this._suggestionsVisible;
+        this._suggestionButtons.add(button);
         this.add_child(button);
+        this._syncSettingsButton();
     }
 
     clear() {
-        this.remove_all_children();
+        for (const button of this._suggestionButtons)
+            button.destroy();
+        this._suggestionButtons.clear();
+        this._syncSettingsButton();
     }
 
     /** @param {boolean} visible */
     setVisible(visible) {
-        for (const child of this)
-            child.visible = visible;
+        this._suggestionsVisible = visible;
+        for (const button of this._suggestionButtons)
+            button.visible = visible;
+        this._syncSettingsButton();
     }
 });
+
+class KeyboardSettingsPopup extends NoGrabPopup {
+    /**
+     * @param {Clutter.Actor} actor
+     * @param {Gio.Settings} settings
+     * @param {boolean} touchscreenAvailable
+     */
+    constructor(actor, settings, touchscreenAvailable) {
+        super(actor, St.Side.BOTTOM);
+
+        const splitItem = new PopupMenu.PopupSwitchMenuItem(
+            _('Use Split Keyboard'), false, {can_focus: false});
+        settings.bind(SPLIT_KEYBOARD_ENABLED,
+            splitItem, 'state', Gio.SettingsBindFlags.DEFAULT);
+        if (!touchscreenAvailable)
+            splitItem.setStatus(_('Unavailable'));
+        this.addMenuItem(splitItem);
+
+        this.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        const settingsItem = this.addSettingsAction(
+            _('More settings...'), 'gnome-keyboard-panel.desktop');
+        settingsItem.can_focus = false;
+    }
+}
 
 class LanguageSelectionPopup extends NoGrabPopup {
     /** @param {Clutter.Actor} actor */
@@ -293,10 +353,6 @@ class LanguageSelectionPopup extends NoGrabPopup {
                 ? PopupMenu.Ornament.DOT
                 : PopupMenu.Ornament.NO_DOT);
         }
-
-        this.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        item = this.addSettingsAction(_('Keyboard Settings'), 'gnome-keyboard-panel.desktop');
-        item.can_focus = false;
     }
 }
 
@@ -1224,6 +1280,11 @@ export const Keyboard = GObject.registerClass({
         this._emojiActive = false;
 
         this._languagePopup = null;
+        this._settingsPopup = null;
+        this._settingsPopupOpenStateId = 0;
+        this._settingsPopupInteraction = false;
+        this._settingsPopupKeyFocus = null;
+        this._settingsPopupRestoringFocusId = 0;
         /** @type {Meta.Window | null} */
         this._focusWindow = null;
         this._focusWindowStartY = null;
@@ -1249,10 +1310,24 @@ export const Keyboard = GObject.registerClass({
         this._keyboardRequested = false;
         this._keyboardRestingId = 0;
 
+        this._settings = new Gio.Settings({schema_id: SHELL_SCHEMA});
+        this._seat = global.stage.context.get_backend().get_default_seat();
+
         Main.layoutManager.connectObject('monitors-changed',
-            this._relayout.bind(this), this);
+            this._onMonitorsChanged.bind(this), this);
 
         this._setupKeyboard();
+
+        this._settings.connectObject(
+            `changed::${SPLIT_KEYBOARD_ENABLED}`,
+            this._syncLayoutMode.bind(this),
+            `changed::${SPLIT_KEYBOARD_SIDE_SIZE}`,
+            this._syncSplitKeyboardSideSize.bind(this),
+            this);
+        this._seat.connectObject(
+            'device-added', this._syncLayoutMode.bind(this),
+            'device-removed', this._syncLayoutMode.bind(this),
+            this);
 
         this.connect('destroy', this._onDestroy.bind(this));
     }
@@ -1285,6 +1360,11 @@ export const Keyboard = GObject.registerClass({
 
         this._clearShowIdle();
 
+        if (this._settingsPopupRestoringFocusId) {
+            GLib.source_remove(this._settingsPopupRestoringFocusId);
+            this._settingsPopupRestoringFocusId = 0;
+        }
+
         this._keyboardController.setOskCompletion(false);
         this._keyboardController.destroy();
 
@@ -1295,6 +1375,14 @@ export const Keyboard = GObject.registerClass({
         if (this._languagePopup) {
             this._languagePopup.destroy();
             this._languagePopup = null;
+        }
+
+        if (this._settingsPopup) {
+            if (this._settingsPopupOpenStateId)
+                this._settingsPopup.disconnect(this._settingsPopupOpenStateId);
+            this._settingsPopup.destroy();
+            this._settingsPopup = null;
+            this._settingsPopupOpenStateId = 0;
         }
 
         if (this._layoutState.mode === 'split') {
@@ -1310,10 +1398,15 @@ export const Keyboard = GObject.registerClass({
         this._keyboardController = new KeyboardController();
 
         this._suggestions = new Suggestions();
+        this._suggestions.connect('settings-requested', () => {
+            this._popupKeyboardSettings(this._suggestions.settingsButton);
+        });
         this.add_child(this._suggestions);
 
         /** @type {KeyboardLayoutModeDependentState} */
-        this._layoutState = ENABLE_SPLIT_LAYOUT ? this._createSplitLayoutState() : this._createCenteredLayoutState();
+        this._layoutState = this._shouldUseSplitLayout()
+            ? this._createSplitLayoutState()
+            : this._createCenteredLayoutState();
 
         this._emojiSelection = new EmojiSelection();
         this._emojiSelection.connect('toggle', this._toggleEmoji.bind(this));
@@ -1337,6 +1430,142 @@ export const Keyboard = GObject.registerClass({
             this._onKeyFocusChanged.bind(this), this);
 
         this._relayout();
+    }
+
+    _onMonitorsChanged() {
+        this._relayout();
+        this._syncLayoutMode();
+    }
+
+    /** @returns {Clutter.InputDevice[]} */
+    _getTouchscreens() {
+        return this._seat.list_devices().filter(device =>
+            device.get_device_type() ===
+                Clutter.InputDeviceType.TOUCHSCREEN_DEVICE);
+    }
+
+    /** @returns {number | null} */
+    _getTouchscreenPhysicalWidth() {
+        const monitor = Main.layoutManager.keyboardMonitor;
+        if (!monitor)
+            return null;
+
+        const monitorIsLandscape = monitor.width >= monitor.height;
+        const monitorAspectRatio = monitor.width / monitor.height;
+        let bestMatch = null;
+        let bestAspectRatioDifference = Number.POSITIVE_INFINITY;
+
+        for (const device of this._getTouchscreens()) {
+            const [hasDimensions, width, height] = device.get_dimensions();
+            if (!hasDimensions || width <= 0 || height <= 0)
+                continue;
+
+            const deviceIsLandscape = width >= height;
+            const physicalWidth = monitorIsLandscape === deviceIsLandscape
+                ? width
+                : height;
+            const physicalHeight = monitorIsLandscape === deviceIsLandscape
+                ? height
+                : width;
+            const aspectRatioDifference = Math.abs(
+                monitorAspectRatio - physicalWidth / physicalHeight);
+
+            if (aspectRatioDifference < bestAspectRatioDifference) {
+                bestMatch = physicalWidth;
+                bestAspectRatioDifference = aspectRatioDifference;
+            }
+        }
+
+        return bestMatch;
+    }
+
+    _shouldUseSplitLayout() {
+        if (this._getTouchscreens().length === 0)
+            return false;
+
+        if (this._settings.get_boolean(SPLIT_KEYBOARD_ENABLED))
+            return true;
+
+        const physicalWidth = this._getTouchscreenPhysicalWidth();
+        return physicalWidth !== null &&
+            physicalWidth / 2 > SPLIT_KEYBOARD_MAX_REACH_MM;
+    }
+
+    _syncLayoutMode() {
+        if (!this._layoutState || !this._emojiSelection)
+            return;
+
+        const useSplitLayout = this._shouldUseSplitLayout();
+        if ((this._layoutState.mode === 'split') === useSplitLayout)
+            return;
+
+        const emojiParent = this._emojiSelection.get_parent();
+        emojiParent?.remove_child(this._emojiSelection);
+
+        if (this._layoutState.mode === 'centered') {
+            this._layoutState.aspectContainer.destroy();
+        } else {
+            this._layoutState.resizeGrab?.dismiss();
+            this._layoutState.elements.layoutContainer.destroy();
+        }
+
+        this._layoutState = useSplitLayout
+            ? this._createSplitLayoutState()
+            : this._createCenteredLayoutState();
+        this._addEmojiSelectionToLayout();
+        this._relayout();
+        this._updateKeys();
+        this._updateCurrentPageVisible();
+    }
+
+    /** @param {Clutter.Actor} sourceActor */
+    _popupKeyboardSettings(sourceActor) {
+        if (this._settingsPopupRestoringFocusId) {
+            GLib.source_remove(this._settingsPopupRestoringFocusId);
+            this._settingsPopupRestoringFocusId = 0;
+        }
+
+        if (this._settingsPopup) {
+            if (this._settingsPopupOpenStateId)
+                this._settingsPopup.disconnect(this._settingsPopupOpenStateId);
+            this._settingsPopup.destroy();
+            this._settingsPopupOpenStateId = 0;
+        }
+
+        const keyFocus = global.stage.key_focus;
+        this._settingsPopupKeyFocus = keyFocus instanceof Clutter.Text
+            ? keyFocus
+            : null;
+        this._settingsPopupInteraction = true;
+
+        this._settingsPopup = new KeyboardSettingsPopup(
+            sourceActor, this._settings, this._getTouchscreens().length > 0);
+        this._settingsPopupOpenStateId = this._settingsPopup.connect(
+            'open-state-changed', (_popup, isOpen) => {
+                if (isOpen)
+                    return;
+
+                if (this._settingsPopupKeyFocus?.is_mapped())
+                    this._settingsPopupKeyFocus.grab_key_focus();
+                this._settingsPopupKeyFocus = null;
+
+                this._settingsPopupRestoringFocusId = GLib.idle_add_once(
+                    GLib.PRIORITY_DEFAULT_IDLE, () => {
+                        this._settingsPopupInteraction = false;
+                        this._settingsPopupRestoringFocusId = 0;
+                    });
+            });
+        Main.layoutManager.addTopChrome(this._settingsPopup.actor);
+        this._settingsPopup.open(BoxPointer.PopupAnimation.FULL);
+    }
+
+    _syncSplitKeyboardSideSize() {
+        if (this._layoutState.mode !== 'split' ||
+            this._layoutState.resizing)
+            return;
+
+        this.splitKeyboardSideSize =
+            this._settings.get_int(SPLIT_KEYBOARD_SIDE_SIZE);
     }
 
     /** @returns {CenteredKeyboardLayoutState} */
@@ -1387,6 +1616,7 @@ export const Keyboard = GObject.registerClass({
      * @returns {SplitKeyboardLayoutState}
      */
     _createSplitLayoutState() {
+        const sideSize = this._settings.get_int(SPLIT_KEYBOARD_SIDE_SIZE);
         const layoutContainer = new St.Widget({
             layout_manager: new Clutter.BinLayout(),
             x_expand: true,
@@ -1407,13 +1637,13 @@ export const Keyboard = GObject.registerClass({
             layout_manager: new Clutter.BinLayout(),
             style_class: 'keyboard-split-key-container keyboard-split-container-left',
             y_expand: true,
-            width: SPLIT_KEYBOARD_DEFAULT_SIDE_SIZE,
+            width: sideSize,
         });
         const rightContainerWrapper = new St.Widget({
             layout_manager: new Clutter.BinLayout(),
             style_class: 'keyboard-split-key-container keyboard-split-container-right',
             y_expand: true,
-            width: SPLIT_KEYBOARD_DEFAULT_SIDE_SIZE,
+            width: sideSize,
         });
         const leftResizeHandle = this._createSplitResizeHandle('left');
         const rightResizeHandle = this._createSplitResizeHandle('right');
@@ -1447,10 +1677,10 @@ export const Keyboard = GObject.registerClass({
                     },
                 },
             },
-            sideSize: SPLIT_KEYBOARD_DEFAULT_SIDE_SIZE,
+            sideSize,
             currentLevel: null,
             resizeStartX: 0,
-            resizeStartSize: SPLIT_KEYBOARD_DEFAULT_SIDE_SIZE,
+            resizeStartSize: sideSize,
             resizeGrab: null,
             resizeKeyFocus: null,
             resizing: false,
@@ -1520,6 +1750,8 @@ export const Keyboard = GObject.registerClass({
             state.resizing = false;
             state.elements.splitContainer.remove_style_class_name(
                 'keyboard-split-resizing');
+            this._settings.set_int(
+                SPLIT_KEYBOARD_SIDE_SIZE, Math.round(state.sideSize));
 
             const {resizeKeyFocus} = state;
             state.resizeKeyFocus = null;
@@ -1670,10 +1902,12 @@ export const Keyboard = GObject.registerClass({
         this._focusInOsk = Boolean(keyFocus &&
             (keyFocus._extendedKeys ||
              keyFocus.extendedKey ||
+             this._settingsPopup?.actor.contains(keyFocus) ||
              this._isSplitResizeHandle(keyFocus)));
         const resizing = this._layoutState.mode === 'split' &&
             this._layoutState.resizing;
-        if (this._focusInOsk || focusWasInOsk || resizing)
+        if (this._focusInOsk || focusWasInOsk || resizing ||
+            this._settingsPopupInteraction)
             return;
 
         if (!(focus instanceof Clutter.Text)) {
@@ -2198,10 +2432,12 @@ export const Keyboard = GObject.registerClass({
         else
             return;
 
-        if (!enabled &&
-            this._layoutState.mode === 'split' &&
-            this._layoutState.resizing)
-            return;
+        if (!enabled) {
+            const resizing = this._layoutState.mode === 'split' &&
+                this._layoutState.resizing;
+            if (resizing || this._settingsPopupInteraction)
+                return;
+        }
 
         if ((this._contentHints & Clutter.InputContentHintFlags.INHIBIT_OSK) !== 0)
             enabled = false;
@@ -2305,6 +2541,7 @@ export const Keyboard = GObject.registerClass({
     }
 
     open(immediate = false) {
+        this._syncLayoutMode();
         this._clearShowIdle();
         this._keyboardRequested = true;
 

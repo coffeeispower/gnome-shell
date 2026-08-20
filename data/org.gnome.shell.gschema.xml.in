@@ -11,6 +11,24 @@
         using the Alt-F2 dialog.
       </description>
     </key>
+    <key name="screen-keyboard-split-enabled" type="b">
+      <default>false</default>
+      <summary>Always use a split on-screen keyboard</summary>
+      <description>
+        Use a split layout for the on-screen keyboard when a touchscreen is
+        available. If disabled, the Shell may still select the split layout
+        automatically when the touchscreen is too wide to comfortably reach
+        its center.
+      </description>
+    </key>
+    <key name="screen-keyboard-split-side-size" type="i">
+      <default>500</default>
+      <range min="1" max="4096"/>
+      <summary>Width of each split on-screen keyboard side</summary>
+      <description>
+        The last width selected for each side of the split on-screen keyboard.
+      </description>
+    </key>
     <key name="enabled-extensions" type="as">
       <default>[]</default>
       <summary>UUIDs of extensions to enable</summary>

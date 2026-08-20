@@ -153,7 +153,7 @@ $default_key_bg_color: if($variant=='light', darken($key_bg_color, 11%), darken(
   color: $osd_fg_color;
 
   // each suggestion
-  StButton {
+  .word-suggestion {
     margin: 0 3px;
     min-width: 32px;
     border-radius: 4px;
