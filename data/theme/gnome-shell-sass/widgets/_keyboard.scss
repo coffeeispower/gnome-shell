@@ -57,6 +57,56 @@ $default_key_bg_color: if($variant=='light', darken($key_bg_color, 11%), darken(
 
   // size of icons on keys
   StIcon { icon-size: $medium_scalable_icon_size; }
+
+}
+
+// split keyboard resize controls
+.keyboard-split-container {
+  .keyboard-split-key-container {
+    padding: $base_padding * 2;
+  }
+
+  .keyboard-split-key-container,
+  .keyboard-resize-handle {
+    transition-duration: 100ms;
+  }
+
+  .keyboard-resize-handle {
+    background-color: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    color: transparentize($osd_fg_color, 0.7);
+  }
+
+  &.keyboard-split-resizing {
+    .keyboard-split-key-container,
+    .keyboard-resize-handle {
+      background-color: lighten($osd_bg_color, 3%);
+    }
+
+    .keyboard-split-key-container {
+      &.keyboard-split-container-left {
+        border-radius: 0 12px 12px 0;
+      }
+
+      &.keyboard-split-container-right {
+        border-radius: 12px 0 0 12px;
+      }
+    }
+
+    .keyboard-resize-handle {
+      color: $osd_fg_color;
+
+      &.handle-left {
+        border-radius: 0 8px 8px 0;
+      }
+
+      &.handle-right {
+        border-radius: 8px 0 0 8px;
+      }
+    }
+  }
 }
 
 // long press on a key popup

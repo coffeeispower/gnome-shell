@@ -27,6 +27,11 @@ const KEYBOARD_REST_TIME = KEYBOARD_ANIMATION_TIME * 2;
 const A11Y_APPLICATIONS_SCHEMA = 'org.gnome.desktop.a11y.applications';
 const SHOW_KEYBOARD = 'screen-keyboard-enabled';
 const EMOJI_PAGE_SEPARATION = 32;
+const ENABLE_SPLIT_LAYOUT = true;
+const SPLIT_KEYBOARD_DEFAULT_SIDE_SIZE = 500;
+const SPLIT_KEYBOARD_MIN_SIDE_SIZE = 50;
+const SPLIT_KEYBOARD_MIN_GAP = 64;
+const SPLIT_KEYBOARD_HANDLE_WIDTH = 48;
 
 /* KeyContainer puts keys in a grid where a 1:1 key takes this size */
 const KEY_SIZE = 2;
@@ -212,6 +217,21 @@ class KeyContainer extends St.Widget {
 
         this._currentCol += leftOffset + width;
         this._maxCols = Math.max(this._currentCol, this._maxCols);
+    }
+
+    /** @param {number} width */
+    ensureGridWidth(width) {
+        if (width <= this._maxCols)
+            return;
+
+        // GridLayout only creates columns occupied by an actor. This
+        // transparent actor makes paired split layouts use the same logical
+        // column width without adding another visible row.
+        const expander = new Clutter.Actor({opacity: 0});
+        this._gridLayout.attach(expander,
+            0, KEY_SIZE,
+            width * KEY_SIZE, KEY_SIZE);
+        this._maxCols = width;
     }
 
     /** @returns {[number, number]} */
@@ -1178,8 +1198,12 @@ export class KeyboardManager extends Signals.EventEmitter {
         this._keyboard?.setSuggestionsVisible(visible);
     }
 }
-/** @typedef {{mode: 'centered', aspectContainer: InstanceType<typeof AspectContainer>, currentLayout: Clutter.Actor | null, layers: Record<string, InstanceType<typeof KeyContainer>>, currentPage: InstanceType<typeof KeyContainer> | null}} CenteredKeyboardLayoutState */
-/** @typedef {{mode: 'split'}} SplitKeyboardLayoutState */
+/** @typedef {InstanceType<typeof KeyContainer>} KeyContainer */
+/** @typedef {InstanceType<typeof AspectContainer>} AspectContainer */
+/** @typedef {'left' | 'right'} KeyboardSide */
+/** @typedef {{keyContainers: Record<string, KeyContainer>, keyContainerWrapper: St.Widget, resizeHandle: St.Widget}} SplitKeyboardSideState */
+/** @typedef {{mode: 'centered', aspectContainer: AspectContainer, currentLayout: Clutter.Actor | null, layers: Record<string, KeyContainer>, currentPage: KeyContainer | null}} CenteredKeyboardLayoutState */
+/** @typedef {{mode: 'split', elements: {layoutContainer: St.Widget, splitContainer: St.BoxLayout, emojiContainer: AspectContainer, keyContainers: Record<KeyboardSide, SplitKeyboardSideState>}, sideSize: number, currentLevel: string | null, resizeStartX: number, resizeStartSize: number, resizeGrab: Clutter.Grab | null, resizeKeyFocus: Clutter.Actor | null, resizing: boolean}} SplitKeyboardLayoutState */
 /** @typedef {CenteredKeyboardLayoutState | SplitKeyboardLayoutState} KeyboardLayoutModeDependentState */
 export const Keyboard = GObject.registerClass({
     Signals: {
@@ -1196,8 +1220,7 @@ export const Keyboard = GObject.registerClass({
             text_direction: Clutter.TextDirection.LTR,
             orientation: Clutter.Orientation.VERTICAL,
         });
-        /** @type {boolean | Clutter.Actor | string} */
-        this._focusInExtendedKeys = false;
+        this._focusInOsk = false;
         this._emojiActive = false;
 
         this._languagePopup = null;
@@ -1273,6 +1296,11 @@ export const Keyboard = GObject.registerClass({
             this._languagePopup.destroy();
             this._languagePopup = null;
         }
+
+        if (this._layoutState.mode === 'split') {
+            this._layoutState.resizeGrab?.dismiss();
+            this._layoutState.resizeGrab = null;
+        }
     }
 
     _setupKeyboard() {
@@ -1283,9 +1311,6 @@ export const Keyboard = GObject.registerClass({
 
         this._suggestions = new Suggestions();
         this.add_child(this._suggestions);
-
-        const ENABLE_SPLIT_LAYOUT = true;
-
 
         /** @type {KeyboardLayoutModeDependentState} */
         this._layoutState = ENABLE_SPLIT_LAYOUT ? this._createSplitLayoutState() : this._createCenteredLayoutState();
@@ -1331,13 +1356,179 @@ export const Keyboard = GObject.registerClass({
         };
     }
 
+    set splitKeyboardSideSize(/** @type {number} */ size) {
+        const state = this._layoutState;
+        if (state.mode !== 'split')
+            throw new Error('Cannot set splitKeyboardSideSize when layout is not split');
+
+        const availableWidth = this.width || state.elements.splitContainer.width;
+        const reservedWidth =
+            SPLIT_KEYBOARD_MIN_GAP + SPLIT_KEYBOARD_HANDLE_WIDTH * 2;
+        const maximumSize = availableWidth > 0
+            ? Math.max(0, (availableWidth - reservedWidth) / 2)
+            : size;
+        const minimumSize = Math.min(SPLIT_KEYBOARD_MIN_SIDE_SIZE, maximumSize);
+
+        state.sideSize = Math.round(
+            Math.clamp(size, minimumSize, maximumSize));
+        state.elements.keyContainers.left.keyContainerWrapper.minWidth = state.sideSize;
+        state.elements.keyContainers.right.keyContainerWrapper.minWidth = state.sideSize;
+        state.elements.keyContainers.left.keyContainerWrapper.width = state.sideSize;
+        state.elements.keyContainers.right.keyContainerWrapper.width = state.sideSize;
+    }
+
+    get splitKeyboardSideSize() {
+        if (this._layoutState.mode !== 'split')
+            throw new Error('Cannot get splitKeyboardSideSize when layout is not split');
+        return this._layoutState.sideSize;
+    }
+
     /**
      * @returns {SplitKeyboardLayoutState}
      */
     _createSplitLayoutState() {
-        return {
+        const layoutContainer = new St.Widget({
+            layout_manager: new Clutter.BinLayout(),
+            x_expand: true,
+            y_expand: true,
+        });
+        const splitContainer = new St.BoxLayout({
+            orientation: Clutter.Orientation.HORIZONTAL,
+            style_class: 'keyboard-split-container',
+            x_expand: true,
+            y_expand: true,
+        });
+        const emojiContainer = new AspectContainer({
+            layout_manager: new Clutter.BinLayout(),
+            x_expand: true,
+            y_expand: true,
+        });
+        const leftContainerWrapper = new St.Widget({
+            layout_manager: new Clutter.BinLayout(),
+            style_class: 'keyboard-split-key-container keyboard-split-container-left',
+            y_expand: true,
+            width: SPLIT_KEYBOARD_DEFAULT_SIDE_SIZE,
+        });
+        const rightContainerWrapper = new St.Widget({
+            layout_manager: new Clutter.BinLayout(),
+            style_class: 'keyboard-split-key-container keyboard-split-container-right',
+            y_expand: true,
+            width: SPLIT_KEYBOARD_DEFAULT_SIDE_SIZE,
+        });
+        const leftResizeHandle = this._createSplitResizeHandle('left');
+        const rightResizeHandle = this._createSplitResizeHandle('right');
+
+        splitContainer.add_child(leftContainerWrapper);
+        splitContainer.add_child(leftResizeHandle);
+        splitContainer.add_child(new St.Widget({x_expand: true}));
+        splitContainer.add_child(rightResizeHandle);
+        splitContainer.add_child(rightContainerWrapper);
+        layoutContainer.add_child(splitContainer);
+        layoutContainer.add_child(emojiContainer);
+        this.add_child(layoutContainer);
+
+        /** @type {SplitKeyboardLayoutState} */
+        const state = {
             mode: 'split',
+            elements: {
+                layoutContainer,
+                splitContainer,
+                emojiContainer,
+                keyContainers: {
+                    left: {
+                        keyContainers: {},
+                        keyContainerWrapper: leftContainerWrapper,
+                        resizeHandle: leftResizeHandle,
+                    },
+                    right: {
+                        keyContainers: {},
+                        keyContainerWrapper: rightContainerWrapper,
+                        resizeHandle: rightResizeHandle,
+                    },
+                },
+            },
+            sideSize: SPLIT_KEYBOARD_DEFAULT_SIDE_SIZE,
+            currentLevel: null,
+            resizeStartX: 0,
+            resizeStartSize: SPLIT_KEYBOARD_DEFAULT_SIDE_SIZE,
+            resizeGrab: null,
+            resizeKeyFocus: null,
+            resizing: false,
         };
+
+        this._addSplitResizeGesture(state, 'left');
+        this._addSplitResizeGesture(state, 'right');
+
+        return state;
+    }
+
+    /** @param {KeyboardSide} side */
+    _createSplitResizeHandle(side) {
+        const handle = new St.Widget({
+            accessible_name: _('Resize Keyboard'),
+            can_focus: false,
+            layout_manager: new Clutter.BinLayout(),
+            reactive: true,
+            style_class: `keyboard-resize-handle handle-${side}`,
+            y_align: Clutter.ActorAlign.CENTER,
+            width: SPLIT_KEYBOARD_HANDLE_WIDTH,
+            height: SPLIT_KEYBOARD_HANDLE_WIDTH,
+        });
+        handle.add_child(new St.Icon({
+            icon_name: side === 'left'
+                ? 'go-next-symbolic'
+                : 'go-previous-symbolic',
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+            width: SPLIT_KEYBOARD_HANDLE_WIDTH / 2,
+            height: SPLIT_KEYBOARD_HANDLE_WIDTH / 2,
+        }));
+        return handle;
+    }
+
+    /**
+     * @param {SplitKeyboardLayoutState} state
+     * @param {KeyboardSide} side
+     */
+    _addSplitResizeGesture(state, side) {
+        const handle = state.elements.keyContainers[side].resizeHandle;
+        const gesture = new Clutter.PanGesture();
+        gesture.set_begin_threshold(0);
+        gesture.connect('may-recognize', () => {
+            if (!state.resizing)
+                state.resizeKeyFocus = global.stage.key_focus;
+            state.resizing = true;
+            return true;
+        });
+        gesture.connect('recognize', () => {
+            state.resizeGrab?.dismiss();
+            state.resizeStartX = gesture.get_centroid_abs().x;
+            state.resizeStartSize = state.sideSize;
+            state.resizeGrab = global.stage.grab(handle);
+            state.elements.splitContainer.add_style_class_name(
+                'keyboard-split-resizing');
+        });
+        gesture.connect('pan-update', () => {
+            const delta = gesture.get_centroid_abs().x - state.resizeStartX;
+            const direction = side === 'left' ? 1 : -1;
+            this.splitKeyboardSideSize =
+                state.resizeStartSize + delta * direction * 3;
+        });
+        const endGesture = () => {
+            state.resizeGrab?.dismiss();
+            state.resizeGrab = null;
+            state.resizing = false;
+            state.elements.splitContainer.remove_style_class_name(
+                'keyboard-split-resizing');
+
+            const {resizeKeyFocus} = state;
+            state.resizeKeyFocus = null;
+            if (resizeKeyFocus?.is_mapped())
+                resizeKeyFocus.grab_key_focus();
+        };
+        gesture.connect('end', endGesture);
+        gesture.connect('cancel', endGesture);
+        handle.add_action(gesture);
     }
 
     _addEmojiSelectionToLayout() {
@@ -1347,7 +1538,8 @@ export const Keyboard = GObject.registerClass({
             state.aspectContainer.add_child(this._emojiSelection);
             break;
         case 'split':
-            throw new Error("Can't add emoji selection to split layout: Not implemented yet");
+            state.elements.emojiContainer.add_child(this._emojiSelection);
+            break;
         }
     }
 
@@ -1447,10 +1639,10 @@ export const Keyboard = GObject.registerClass({
         case 'centered':
             return !!state.layers[level];
         case 'split':
-            throw new Error('_hasLevel not yet implemented for split keyboard');
-        default:
-            return false;
+            return !!state.elements.keyContainers.left.keyContainers[level] &&
+                !!state.elements.keyContainers.right.keyContainers[level];
         }
+        return false;
     }
 
     /** @param {string} level */
@@ -1460,25 +1652,28 @@ export const Keyboard = GObject.registerClass({
         case 'centered':
             return state.currentPage === state.layers[level];
         case 'split':
-            throw new Error('_isActiveLevel not yet implemented for split keyboard');
-        default:
-            return false;
+            return state.currentLevel === level;
         }
+        return false;
     }
 
     _onKeyFocusChanged() {
         const focus = global.stage.key_focus;
 
-        // Showing an extended key popup and clicking a key from the extended keys
-        // will grab focus, but ignore that
-        const extendedKeysWereFocused = this._focusInExtendedKeys;
+        // Interacting with OSK controls may temporarily move key focus away
+        // from the text actor, but must not close the keyboard.
+        const focusWasInOsk = this._focusInOsk;
         /**
          * @type {Clutter.Actor & { _extendedKeys?: Clutter.Actor, extendedKey?: string }}
          */
         const keyFocus = focus;
-        this._focusInExtendedKeys =
-            keyFocus && (keyFocus._extendedKeys || keyFocus.extendedKey);
-        if (this._focusInExtendedKeys || extendedKeysWereFocused)
+        this._focusInOsk = Boolean(keyFocus &&
+            (keyFocus._extendedKeys ||
+             keyFocus.extendedKey ||
+             this._isSplitResizeHandle(keyFocus)));
+        const resizing = this._layoutState.mode === 'split' &&
+            this._layoutState.resizing;
+        if (this._focusInOsk || focusWasInOsk || resizing)
             return;
 
         if (!(focus instanceof Clutter.Text)) {
@@ -1493,6 +1688,17 @@ export const Keyboard = GObject.registerClass({
             });
             GLib.Source.set_name_by_id(this._showIdleId, '[gnome-shell] this.open');
         }
+    }
+
+    /** @param {Clutter.Actor} actor */
+    _isSplitResizeHandle(actor) {
+        const state = this._layoutState;
+        if (state.mode !== 'split')
+            return false;
+
+        return Object.values(state.elements.keyContainers).some(
+            ({resizeHandle}) =>
+                actor === resizeHandle || resizeHandle.contains(actor));
     }
 
     /**
@@ -1542,7 +1748,8 @@ export const Keyboard = GObject.registerClass({
             this._updateCenteredLayout(state, keyboardModel);
             break;
         case 'split':
-            throw new Error('_updateSplitLayout not implemented yet');
+            this._updateSplitLayout(state, keyboardModel);
+            break;
         }
     }
 
@@ -1579,6 +1786,151 @@ export const Keyboard = GObject.registerClass({
         state.currentLayout?.destroy();
         state.currentLayout = layout;
         state.layers = layers;
+    }
+
+    /**
+     * @param {SplitKeyboardLayoutState} state
+     * @param {KeyboardModel} keyboardModel
+     */
+    _updateSplitLayout(state, keyboardModel) {
+        state.currentLevel = null;
+
+        for (const side of /** @type {const} */ ['left', 'right']) {
+            const sideState = state.elements.keyContainers[side];
+            for (const keyContainer of Object.values(sideState.keyContainers))
+                keyContainer.destroy();
+            sideState.keyContainers = {};
+        }
+
+        keyboardModel.levels.forEach(currentLevel => {
+            const splitRows = currentLevel.rows.map(row => this._splitRow(row));
+            const gridWidth = splitRows.reduce((maximumWidth, [left, right]) =>
+                Math.max(maximumWidth,
+                    this._getRowWidth(left),
+                    this._getRowWidth(right)), 0);
+
+            const leftLayout = new KeyContainer();
+            const rightLayout = new KeyContainer();
+            leftLayout.mode = currentLevel.mode;
+            rightLayout.mode = currentLevel.mode;
+
+            for (const [left, right] of splitRows) {
+                leftLayout.appendRow();
+                rightLayout.appendRow();
+
+                this._addRowKeys(left, leftLayout, this._emojiVisible);
+                this._addRowKeys(
+                    this._alignSplitRowToEnd(right, gridWidth),
+                    rightLayout,
+                    this._emojiVisible);
+            }
+
+            leftLayout.ensureGridWidth(gridWidth);
+            rightLayout.ensureGridWidth(gridWidth);
+            leftLayout.hide();
+            rightLayout.hide();
+
+            state.elements.keyContainers.left.keyContainers[currentLevel.level] =
+                leftLayout;
+            state.elements.keyContainers.right.keyContainers[currentLevel.level] =
+                rightLayout;
+            state.elements.keyContainers.left.keyContainerWrapper.add_child(
+                leftLayout);
+            state.elements.keyContainers.right.keyContainerWrapper.add_child(
+                rightLayout);
+        });
+    }
+
+    /**
+     * @param {LayoutKey[]} row
+     * @returns {[LayoutKey[], LayoutKey[]]}
+     */
+    _splitRow(row) {
+        const spaceIndex = row.findIndex(key => key.strings?.[0] === ' ');
+        if (spaceIndex >= 0) {
+            const spaceKey = row[spaceIndex];
+            const spaceWidth = (spaceKey.width ?? 1) / 2;
+            return [
+                [
+                    ...row.slice(0, spaceIndex).map(key => this._cloneLayoutKey(key)),
+                    this._cloneLayoutKey(spaceKey, spaceWidth),
+                ],
+                [
+                    this._cloneLayoutKey(spaceKey, spaceWidth, 0),
+                    ...row.slice(spaceIndex + 1).map(key => this._cloneLayoutKey(key)),
+                ],
+            ];
+        }
+
+        if (row.length <= 1)
+            return [row.map(key => this._cloneLayoutKey(key)), []];
+
+        const midpoint = this._getRowWidth(row) / 2;
+        let splitIndex = 1;
+        let position = 0;
+        let nearestDistance = Number.POSITIVE_INFINITY;
+
+        for (let i = 0; i < row.length - 1; i++) {
+            position += this._getKeyWidth(row[i]);
+            const distance = Math.abs(midpoint - position);
+            if (distance < nearestDistance) {
+                nearestDistance = distance;
+                splitIndex = i + 1;
+            }
+        }
+
+        return [
+            row.slice(0, splitIndex).map(key => this._cloneLayoutKey(key)),
+            row.slice(splitIndex).map(key => this._cloneLayoutKey(key)),
+        ];
+    }
+
+    /**
+     * @param {LayoutKey} key
+     * @param {number} [width]
+     * @param {number} [leftOffset]
+     * @returns {LayoutKey}
+     */
+    _cloneLayoutKey(key, width = key.width, leftOffset = key.leftOffset) {
+        return {
+            ...key,
+            strings: key.strings ? [...key.strings] : undefined,
+            width,
+            leftOffset,
+        };
+    }
+
+    /** @param {LayoutKey} key */
+    _getKeyWidth(key) {
+        return (key.leftOffset ?? 0) + (key.width ?? 1);
+    }
+
+    /** @param {LayoutKey[]} row */
+    _getRowWidth(row) {
+        return row.reduce((width, key) => width + this._getKeyWidth(key), 0);
+    }
+
+    /**
+     * @param {LayoutKey[]} row
+     * @param {number} gridWidth
+     * @returns {LayoutKey[]}
+     */
+    _alignSplitRowToEnd(row, gridWidth) {
+        if (row.length === 0)
+            return row;
+
+        const leadingOffset = gridWidth - this._getRowWidth(row);
+        if (leadingOffset <= 0)
+            return row;
+
+        const [firstKey, ...remainingKeys] = row;
+        return [
+            this._cloneLayoutKey(
+                firstKey,
+                firstKey.width,
+                (firstKey.leftOffset ?? 0) + leadingOffset),
+            ...remainingKeys,
+        ];
     }
 
     /**
@@ -1696,8 +2048,19 @@ export const Keyboard = GObject.registerClass({
             if (state.currentPage)
                 this._setCurrentLevelLatched(state.currentPage, latched);
             break;
-        case 'split':
-            throw new Error('_setActiveLevelLatched not implemented for split layout');
+        case 'split': {
+            if (!state.currentLevel)
+                break;
+
+            for (const side of /** @type {const} */ ['left', 'right']) {
+                const keyContainer =
+                    state.elements.keyContainers[side]
+                        .keyContainers[state.currentLevel];
+                if (keyContainer)
+                    this._setCurrentLevelLatched(keyContainer, latched);
+            }
+            break;
+        }
         }
     }
 
@@ -1743,8 +2106,22 @@ export const Keyboard = GObject.registerClass({
             if (state.currentPage)
                 state.currentPage.visible = !this._emojiActive;
             break;
-        case 'split':
-            throw new Error('_updateCurrentPageVisible not implemented for split layout');
+        case 'split': {
+            const visible = !this._emojiActive;
+            state.elements.splitContainer.visible = visible;
+
+            if (!state.currentLevel)
+                break;
+
+            for (const side of /** @type {const} */ ['left', 'right']) {
+                const keyContainer =
+                    state.elements.keyContainers[side]
+                        .keyContainers[state.currentLevel];
+                if (keyContainer)
+                    keyContainer.visible = visible;
+            }
+            break;
+        }
         }
     }
 
@@ -1788,11 +2165,16 @@ export const Keyboard = GObject.registerClass({
             this.height = monitor.height / 4;
 
         this.height = Math.clamp(this.height, minHeight, monitor.height / 2);
+
+        if (this._layoutState.mode === 'split')
+            this.splitKeyboardSideSize = this._layoutState.sideSize;
     }
 
     _updateKeys() {
         const group = this._keyboardController.getCurrentGroup();
         const {purpose} = this._keyboardController;
+        this._disableAllModifiers();
+        this._modifierKeys.clear();
         this._updateLayout(group, purpose);
         this._setActiveLevel('default');
     }
@@ -1816,6 +2198,11 @@ export const Keyboard = GObject.registerClass({
         else
             return;
 
+        if (!enabled &&
+            this._layoutState.mode === 'split' &&
+            this._layoutState.resizing)
+            return;
+
         if ((this._contentHints & Clutter.InputContentHintFlags.INHIBIT_OSK) !== 0)
             enabled = false;
 
@@ -1833,7 +2220,8 @@ export const Keyboard = GObject.registerClass({
             this._setCenteredActiveLevel(state, activeLevel);
             break;
         case 'split':
-            throw new Error('_setSplitActiveLevel not implemented yet');
+            this._setSplitActiveLevel(state, activeLevel);
+            break;
         }
     }
 
@@ -1864,6 +2252,48 @@ export const Keyboard = GObject.registerClass({
         this._updateCurrentPageVisible();
         const [columns, rows] = state.currentPage.ratio;
         state.aspectContainer.ratio = [columns, rows];
+        this._emojiSelection.ratio = [columns, rows];
+    }
+
+    /**
+     * @param {SplitKeyboardLayoutState} state
+     * @param {string} activeLevel
+     */
+    _setSplitActiveLevel(state, activeLevel) {
+        const leftPage =
+            state.elements.keyContainers.left.keyContainers[activeLevel];
+        const rightPage =
+            state.elements.keyContainers.right.keyContainers[activeLevel];
+        if (!leftPage || !rightPage)
+            return;
+
+        if (state.currentLevel === activeLevel) {
+            this._updateCurrentPageVisible();
+            return;
+        }
+
+        if (state.currentLevel) {
+            const previousLeft = state.elements.keyContainers.left
+                .keyContainers[state.currentLevel];
+            const previousRight = state.elements.keyContainers.right
+                .keyContainers[state.currentLevel];
+            if (previousLeft) {
+                this._setCurrentLevelLatched(previousLeft, false);
+                previousLeft.hide();
+            }
+            if (previousRight) {
+                this._setCurrentLevelLatched(previousRight, false);
+                previousRight.hide();
+            }
+        }
+
+        this._disableAllModifiers();
+        state.currentLevel = activeLevel;
+        this._updateCurrentPageVisible();
+
+        const columns = leftPage.ratio[0] + rightPage.ratio[0];
+        const rows = Math.max(leftPage.ratio[1], rightPage.ratio[1]);
+        state.elements.emojiContainer.ratio = [columns, rows];
         this._emojiSelection.ratio = [columns, rows];
     }
 
