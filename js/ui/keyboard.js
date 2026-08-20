@@ -1,3 +1,4 @@
+// @ts-check
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
@@ -7,8 +8,8 @@ import Graphene from 'gi://Graphene';
 import IBus from 'gi://IBus';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
-import * as Signals from '../misc/signals.js';
 
+import * as Signals from '../misc/signals.js';
 import * as BoxPointer from './boxpointer.js';
 import * as InputSourceManager from './status/keyboard.js';
 import * as IBusManager from '../misc/ibusManager.js';
@@ -32,16 +33,28 @@ const BACKSPACE_WORD_DELETE_THRESHOLD = 50;
 
 const AspectContainer = GObject.registerClass(
 class AspectContainer extends St.Widget {
+    _ratio = 1;
+    /**
+     * @param {any} params
+     */
     _init(params) {
         super._init(params);
-        this._ratio = 1;
     }
 
+    /**
+     * @param {number} relWidth
+     * @param {number} relHeight
+     */
     setRatio(relWidth, relHeight) {
         this._ratio = relWidth / relHeight;
         this.queue_relayout();
     }
 
+    /**
+     * @override
+     * @param {number} forHeight
+     * @returns {[number, number]}
+     */
     vfunc_get_preferred_width(forHeight) {
         let [min, nat] = super.vfunc_get_preferred_width(forHeight);
 
@@ -51,6 +64,11 @@ class AspectContainer extends St.Widget {
         return [min, nat];
     }
 
+    /**
+     * @override
+     * @param {number} forWidth
+     * @returns {[number, number]}
+     */
     vfunc_get_preferred_height(forWidth) {
         let [min, nat] = super.vfunc_get_preferred_height(forWidth);
 
@@ -60,6 +78,10 @@ class AspectContainer extends St.Widget {
         return [min, nat];
     }
 
+    /**
+     * @param {Clutter.ActorBox} box
+     * @override
+     */
     vfunc_allocate(box) {
         if (box.get_width() > 0 && box.get_height() > 0) {
             const sizeRatio = box.get_width() / box.get_height();
@@ -130,21 +152,27 @@ class NoGrabPopup extends PopupMenu.PopupMenu {
 
 const KeyContainer = GObject.registerClass(
 class KeyContainer extends St.Widget {
+    _gridLayout = new Clutter.GridLayout({
+        orientation: Clutter.Orientation.HORIZONTAL,
+        column_homogeneous: true,
+        row_homogeneous: true,
+    });
+
+    _nRows = 0;
+    _currentCol = 0;
+    _maxCols = 0;
+
+    /** @type {InstanceType<typeof Key>[]} */
+    shiftKeys = [];
+
+    mode = '';
+
     _init() {
-        const gridLayout = new Clutter.GridLayout({
-            orientation: Clutter.Orientation.HORIZONTAL,
-            column_homogeneous: true,
-            row_homogeneous: true,
-        });
         super._init({
-            layout_manager: gridLayout,
+            layout_manager: this._gridLayout,
             x_expand: true,
             y_expand: true,
         });
-        this._gridLayout = gridLayout;
-        this._nRows = 0;
-        this._currentCol = 0;
-        this._maxCols = 0;
     }
 
     appendRow() {
@@ -152,6 +180,14 @@ class KeyContainer extends St.Widget {
         this._currentCol = 0;
     }
 
+    /**
+     * Adds a new key to this key container, adding to the inner grid layout.
+     *
+     * @param {Clutter.Actor} key
+     * @param {number} width
+     * @param {number} height
+     * @param {number} leftOffset
+     */
     appendKey(key, width = 1, height = 1, leftOffset = 0) {
         const left = this._currentCol + leftOffset;
         const top = this._nRows;
@@ -163,6 +199,7 @@ class KeyContainer extends St.Widget {
         this._maxCols = Math.max(this._currentCol, this._maxCols);
     }
 
+    /** @returns {[number, number]} */
     getRatio() {
         return [this._maxCols, this._nRows];
     }
@@ -294,6 +331,7 @@ const Key = GObject.registerClass({
     }
 
     _makeKey(commitString, label, icon) {
+        /** @type {St.Button & { _extendedKeys?: Clutter.Actor | null, extendedKey?: string }} */
         const button = new St.Button({
             style_class: 'keyboard-key',
             x_expand: true,
@@ -791,7 +829,11 @@ const EmojiSelection = GObject.registerClass({
             Clutter.Orientation.HORIZONTAL);
         this._pageIndicator.y_expand = false;
         this._pageIndicator.y_align = Clutter.ActorAlign.START;
-        this._pagerBox.add_child(this._pageIndicator);
+        // The PageIndicators override returns a tuple, but that annotation is
+        // outside this file's incremental type-checking scope.
+        /** @type {any} */
+        const pageIndicatorActor = this._pageIndicator;
+        this._pagerBox.add_child(pageIndicatorActor);
         this._pageIndicator.setReactive(false);
 
         this._emojiPager.connect('notify::delta', () => {
@@ -941,9 +983,11 @@ export class KeyboardManager extends Signals.EventEmitter {
         });
 
         const allowedModes = Shell.ActionMode.ALL & ~Shell.ActionMode.LOCK_SCREEN;
+        /** @type {any} */
+        const bottomSide = St.Side.BOTTOM;
         const bottomDragGesture = new Shell.EdgeDragGesture({
             name: 'OSK show bottom drag',
-            side: St.Side.BOTTOM,
+            side: bottomSide,
         });
         bottomDragGesture.connect('may-recognize', () => {
             return allowedModes & Main.actionMode;
@@ -952,7 +996,7 @@ export class KeyboardManager extends Signals.EventEmitter {
             this._keyboard?.gestureProgress(progress);
         });
         bottomDragGesture.connect('end', () => {
-            this._keyboard?.gestureActivate(Main.layoutManager.bottomIndex);
+            this._keyboard?.gestureActivate();
         });
         bottomDragGesture.connect('cancel', () => {
             this._keyboard?.gestureCancel();
@@ -1163,10 +1207,11 @@ export const Keyboard = GObject.registerClass({
         if ((this._contentHints & Clutter.InputContentHintFlags.NO_EMOJI) !== 0)
             return false;
 
-        return this._purpose === Clutter.InputContentPurpose.NORMAL ||
-            this._purpose === Clutter.InputContentPurpose.ALPHA ||
-            this._purpose === Clutter.InputContentPurpose.PASSWORD ||
-            this._purpose === Clutter.InputContentPurpose.TERMINAL;
+        const {purpose} = this._keyboardController;
+        return purpose === Clutter.InputContentPurpose.NORMAL ||
+            purpose === Clutter.InputContentPurpose.ALPHA ||
+            purpose === Clutter.InputContentPurpose.PASSWORD ||
+            purpose === Clutter.InputContentPurpose.TERMINAL;
     }
 
     _onContentHintsChanged(controller, contentHints) {
@@ -1248,7 +1293,12 @@ export const Keyboard = GObject.registerClass({
         // Showing an extended key popup and clicking a key from the extended keys
         // will grab focus, but ignore that
         const extendedKeysWereFocused = this._focusInExtendedKeys;
-        this._focusInExtendedKeys = focus && (focus._extendedKeys || focus.extendedKey);
+        /**
+         * @type {Clutter.Actor & { _extendedKeys?: Clutter.Actor, extendedKey?: string }}
+         */
+        const keyFocus = focus;
+        this._focusInExtendedKeys =
+            keyFocus && (keyFocus._extendedKeys || keyFocus.extendedKey);
         if (this._focusInExtendedKeys || extendedKeysWereFocused)
             return;
 
@@ -1569,8 +1619,9 @@ export const Keyboard = GObject.registerClass({
             this._currentPage = null;
         });
         this._updateCurrentPageVisible();
-        this._aspectContainer.setRatio(...this._currentPage.getRatio());
-        this._emojiSelection.setRatio(...this._currentPage.getRatio());
+        const [columns, rows] = this._currentPage.getRatio();
+        this._aspectContainer.setRatio(columns, rows);
+        this._emojiSelection.setRatio(columns, rows);
     }
 
     _clearKeyboardRestTimer() {
