@@ -3,12 +3,18 @@
         "allowJs": true,
         "checkJs": false,
         "noEmit": true,
-        "module": "NodeNext",
-        "moduleResolution": "NodeNext",
-        "target": "ES2023"
+        "types": [],
+        "strict": false,
+        "noImplicitAny": true,
+        "module": "esnext",
+        "target": "ES2025"
+    },
+    "typeAcquisition": {
+        "enable": false
     },
     "include": [
         "js/**/*.js",
+        "js/**/*.d.ts",
         "@girs/**/*.d.ts"
     ]
 }

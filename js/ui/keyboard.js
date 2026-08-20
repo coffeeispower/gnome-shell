@@ -18,6 +18,9 @@ import * as PageIndicators from './pageIndicators.js';
 import * as PopupMenu from './popupMenu.js';
 import * as SwipeTracker from './swipeTracker.js';
 
+/** @import {EmojiKey, EmojiSection, EmojiPage, KeyParams} from './keyboard' */
+/** @import {LayoutKey, KeyboardLayout, SwipeTrackerInstance} from './keyboard' */
+
 export const KEYBOARD_ANIMATION_TIME = 150;
 const KEYBOARD_REST_TIME = KEYBOARD_ANIMATION_TIME * 2;
 
@@ -33,12 +36,12 @@ const BACKSPACE_WORD_DELETE_THRESHOLD = 50;
 
 const AspectContainer = GObject.registerClass(
 class AspectContainer extends St.Widget {
-    _ratio = 1;
     /**
-     * @param {any} params
+     * @param {Partial<St.Widget.ConstructorProps>} params
      */
-    _init(params) {
-        super._init(params);
+    constructor(params) {
+        super(params);
+        this._ratio = 1;
     }
 
     /**
@@ -100,6 +103,10 @@ class AspectContainer extends St.Widget {
 });
 
 class NoGrabPopup extends PopupMenu.PopupMenu {
+    /**
+     * @param {Clutter.Actor} actor
+     * @param {St.Side} arrowSide
+     */
     constructor(actor, arrowSide) {
         super(actor, 0.5, arrowSide);
 
@@ -118,6 +125,7 @@ class NoGrabPopup extends PopupMenu.PopupMenu {
             'recognize', () => this.close(BoxPointer.PopupAnimation.FULL));
     }
 
+    /** @param {Clutter.ClickGesture} gesture */
     _onMayRecognize(gesture) {
         const {x, y} = gesture.get_coords_abs();
         const targetActor = global.stage.get_actor_at_pos(Clutter.PickMode.ALL, x, y);
@@ -152,27 +160,28 @@ class NoGrabPopup extends PopupMenu.PopupMenu {
 
 const KeyContainer = GObject.registerClass(
 class KeyContainer extends St.Widget {
-    _gridLayout = new Clutter.GridLayout({
-        orientation: Clutter.Orientation.HORIZONTAL,
-        column_homogeneous: true,
-        row_homogeneous: true,
-    });
-
     _nRows = 0;
     _currentCol = 0;
     _maxCols = 0;
+    _destroyID = 0;
 
     /** @type {InstanceType<typeof Key>[]} */
     shiftKeys = [];
 
     mode = '';
 
-    _init() {
-        super._init({
-            layout_manager: this._gridLayout,
+    constructor() {
+        const gridLayout = new Clutter.GridLayout({
+            orientation: Clutter.Orientation.HORIZONTAL,
+            column_homogeneous: true,
+            row_homogeneous: true,
+        });
+        super({
+            layout_manager: gridLayout,
             x_expand: true,
             y_expand: true,
         });
+        this._gridLayout = gridLayout;
     }
 
     appendRow() {
@@ -207,8 +216,8 @@ class KeyContainer extends St.Widget {
 
 const Suggestions = GObject.registerClass(
 class Suggestions extends St.BoxLayout {
-    _init() {
-        super._init({
+    constructor() {
+        super({
             style_class: 'word-suggestions',
             orientation: Clutter.Orientation.HORIZONTAL,
             x_align: Clutter.ActorAlign.CENTER,
@@ -216,6 +225,10 @@ class Suggestions extends St.BoxLayout {
         this.show();
     }
 
+    /**
+     * @param {string} word
+     * @param {() => void} callback
+     */
     add(word, callback) {
         const button = new St.Button({label: word});
         button.connect('clicked', () => callback());
@@ -226,6 +239,7 @@ class Suggestions extends St.BoxLayout {
         this.remove_all_children();
     }
 
+    /** @param {boolean} visible */
     setVisible(visible) {
         for (const child of this)
             child.visible = visible;
@@ -233,10 +247,12 @@ class Suggestions extends St.BoxLayout {
 });
 
 class LanguageSelectionPopup extends NoGrabPopup {
+    /** @param {Clutter.Actor} actor */
     constructor(actor) {
         super(actor, St.Side.BOTTOM);
 
         const inputSourceManager = InputSourceManager.getInputSourceManager();
+        /** @type {Record<string, typeof inputSourceManager.currentSource>} */
         const inputSources = inputSourceManager.inputSources;
 
         let item;
@@ -266,9 +282,13 @@ const Key = GObject.registerClass({
         'commit': {param_types: [GObject.TYPE_STRING]},
     },
 }, class Key extends St.BoxLayout {
-    _init(params, extendedKeys = []) {
-        const {label, iconName, commitString, keyval, hasAction} = {keyval: 0, ...params};
-        super._init({style_class: 'key-container'});
+    /**
+     * @param {KeyParams} params
+     * @param {string[]} extendedKeys
+     */
+    constructor(params, extendedKeys = []) {
+        const {label, iconName, commitString, keyval, hasAction} = {keyval: '0', ...params};
+        super({style_class: 'key-container'});
 
         this._keyval = parseInt(keyval, 16);
         this.keyButton = this._makeKey(commitString, label, iconName);
@@ -330,6 +350,11 @@ const Key = GObject.registerClass({
         this._menu?.close(BoxPointer.PopupAnimation.FULL);
     }
 
+    /**
+     * @param {string} [commitString]
+     * @param {string} [label]
+     * @param {string} [icon]
+     */
     _makeKey(commitString, label, icon) {
         /** @type {St.Button & { _extendedKeys?: Clutter.Actor | null, extendedKey?: string }} */
         const button = new St.Button({
@@ -372,6 +397,7 @@ const Key = GObject.registerClass({
         return button;
     }
 
+    /** @param {boolean} latched */
     setLatched(latched) {
         if (latched)
             this.keyButton.add_style_pseudo_class('latched');
@@ -381,10 +407,15 @@ const Key = GObject.registerClass({
 });
 
 class KeyboardModel {
+    /** @param {string} groupName */
     constructor(groupName) {
         this._model = this._loadModel(groupName);
     }
 
+    /**
+     * @param {string} groupName
+     * @returns {KeyboardLayout}
+     */
     _loadModel(groupName) {
         const file = Gio.File.new_for_uri(
             `resource:///org/gnome/shell/osk-layouts/${groupName}.json`);
@@ -398,8 +429,9 @@ class KeyboardModel {
         return this._model.levels;
     }
 
+    /** @param {string} levelName */
     getKeysForLevel(levelName) {
-        return this._model.levels.find(level => level === levelName);
+        return this._model.levels.find(level => level.level === levelName);
     }
 }
 
@@ -414,7 +446,14 @@ class FocusTracker extends Signals.EventEmitter {
                 this._setCurrentWindow(global.display.focus_window);
                 this.emit('window-changed', this._currentWindow);
             },
-            'grab-op-begin', (display, window, op, _sprite) => {
+            'grab-op-begin',
+            /**
+             * @param {Meta.Display} display
+             * @param {Meta.Window} window
+             * @param {Meta.GrabOp} op
+             * @param {Clutter.Actor} _sprite
+             */
+            (display, window, op, _sprite) => {
                 if (window === this._currentWindow &&
                     (op === Meta.GrabOp.MOVING || op === Meta.GrabOp.KEYBOARD_MOVING))
                     this.emit('window-grabbed');
@@ -424,11 +463,20 @@ class FocusTracker extends Signals.EventEmitter {
 
         /* Valid for wayland clients */
         Main.inputMethod.connectObject('cursor-location-changed',
+            /**
+             * @param {Clutter.InputMethod} o
+             * @param {Graphene.Rect} rect
+             */
             (o, rect) => this._setCurrentRect(rect), this);
 
         this._ibusManager = IBusManager.getIBusManager();
         this._ibusManager.connectObject(
-            'set-cursor-location', (manager, rect) => {
+            'set-cursor-location',
+            /**
+             * @param {object} manager
+             * @param {{x: number, y: number, width: number, height: number}} rect
+             */
+            (manager, rect) => {
                 /* Valid for X11 clients only */
                 if (Main.inputMethod.currentFocus)
                     return;
@@ -454,6 +502,7 @@ class FocusTracker extends Signals.EventEmitter {
         return this._currentWindow;
     }
 
+    /** @param {Meta.Window | null} window */
     _setCurrentWindow(window) {
         this._currentWindow?.disconnectObject(this);
 
@@ -465,6 +514,7 @@ class FocusTracker extends Signals.EventEmitter {
         }
     }
 
+    /** @param {Graphene.Rect} rect */
     _setCurrentRect(rect) {
         // Some clients give us 0-sized rects, in that case set size to 1
         if (rect.size.width <= 0)
@@ -516,8 +566,9 @@ const EmojiPager = GObject.registerClass({
         },
     },
 }, class EmojiPager extends St.Widget {
-    _init(sections) {
-        super._init({
+    /** @param {EmojiSection[]} sections */
+    constructor(sections) {
+        super({
             layout_manager: new Clutter.BinLayout(),
             reactive: true,
             clip_to_allocation: true,
@@ -525,12 +576,19 @@ const EmojiPager = GObject.registerClass({
         });
         this._sections = sections;
 
+        /** @type {EmojiPage[]} */
         this._pages = [];
+        /** @type {St.Widget | null} */
         this._panel = null;
+        /** @type {number | null} */
         this._curPage = null;
+        /** @type {number | null} */
         this._followingPage = null;
+        /** @type {St.Widget | null} */
         this._followingPanel = null;
+        /** @type {number} */
         this._delta = 0;
+        /** @type {number | null} */
         this._width = null;
 
         const swipeTracker = new SwipeTracker.SwipeTracker(this,
@@ -560,6 +618,7 @@ const EmojiPager = GObject.registerClass({
         }
     }
 
+    /** @returns {number} */
     get delta() {
         return this._delta;
     }
@@ -601,10 +660,12 @@ const EmojiPager = GObject.registerClass({
         }
     }
 
+    /** @param {number} nPage */
     _prevPage(nPage) {
         return (nPage + this._pages.length - 1) % this._pages.length;
     }
 
+    /** @param {number} nPage */
     _nextPage(nPage) {
         return (nPage + 1) % this._pages.length;
     }
@@ -619,17 +680,27 @@ const EmojiPager = GObject.registerClass({
             return this._prevPage(this._curPage);
     }
 
+    /**
+     * @param {SwipeTrackerInstance} tracker
+     * @param {number} progress
+     */
     _onSwipeUpdate(tracker, progress) {
         this.delta = -progress * this._width;
         return false;
     }
 
+    /** @param {SwipeTrackerInstance} tracker */
     _onSwipeBegin(tracker) {
         this._width = this.width;
         const points = [-1, 0, 1];
         tracker.confirmSwipe(this._width, points, 0, 0);
     }
 
+    /**
+     * @param {SwipeTrackerInstance} tracker
+     * @param {number} duration
+     * @param {number} endProgress
+     */
     _onSwipeEnd(tracker, duration, endProgress) {
         this.remove_all_transitions();
         if (endProgress === 0) {
@@ -648,6 +719,7 @@ const EmojiPager = GObject.registerClass({
     }
 
     _initPagingInfo() {
+        /** @type {EmojiPage[]} */
         this._pages = [];
 
         for (let i = 0; i < this._sections.length; i++) {
@@ -655,7 +727,8 @@ const EmojiPager = GObject.registerClass({
             const itemsPerPage = this._nCols * this._nRows;
             const nPages = Math.ceil(section.keys.length / itemsPerPage);
             let page = -1;
-            let pageKeys;
+            /** @type {EmojiKey[]} */
+            let pageKeys = [];
 
             for (let j = 0; j < section.keys.length; j++) {
                 if (j % itemsPerPage === 0) {
@@ -669,6 +742,10 @@ const EmojiPager = GObject.registerClass({
         }
     }
 
+    /**
+     * @param {EmojiSection} section
+     * @param {number} nPage
+     */
     _lookupSection(section, nPage) {
         for (let i = 0; i < this._pages.length; i++) {
             const page = this._pages[i];
@@ -680,6 +757,7 @@ const EmojiPager = GObject.registerClass({
         return -1;
     }
 
+    /** @param {number} nPage */
     _generatePanel(nPage) {
         const gridLayout = new Clutter.GridLayout({
             orientation: Clutter.Orientation.HORIZONTAL,
@@ -723,6 +801,7 @@ const EmojiPager = GObject.registerClass({
         return panel;
     }
 
+    /** @param {number} nPage */
     setCurrentPage(nPage) {
         if (this._curPage === nPage)
             return;
@@ -756,6 +835,10 @@ const EmojiPager = GObject.registerClass({
         this.emit('page-changed', page.section.label, page.page, page.nPages);
     }
 
+    /**
+     * @param {EmojiSection} section
+     * @param {number} nPage
+     */
     setCurrentSection(section, nPage) {
         for (let i = 0; i < this._pages.length; i++) {
             const page = this._pages[i];
@@ -767,6 +850,10 @@ const EmojiPager = GObject.registerClass({
         }
     }
 
+    /**
+     * @param {number} nCols
+     * @param {number} nRows
+     */
     setRatio(nCols, nRows) {
         this._nCols = nCols;
         this._nRows = nRows;
@@ -781,13 +868,13 @@ const EmojiSelection = GObject.registerClass({
         'toggle': {},
     },
 }, class EmojiSelection extends St.Widget {
-    _init() {
+    constructor() {
         const gridLayout = new Clutter.GridLayout({
             orientation: Clutter.Orientation.HORIZONTAL,
             column_homogeneous: true,
             row_homogeneous: true,
         });
-        super._init({
+        super({
             layout_manager: gridLayout,
             style_class: 'emoji-panel',
             x_expand: true,
@@ -795,6 +882,7 @@ const EmojiSelection = GObject.registerClass({
             text_direction: global.stage.text_direction,
         });
 
+        /** @type {EmojiSection[]} */
         this._sections = [
             {first: 'grinning face', label: '🙂️'},
             {first: 'selfie', label: '👍️'},
@@ -831,9 +919,8 @@ const EmojiSelection = GObject.registerClass({
         this._pageIndicator.y_align = Clutter.ActorAlign.START;
         // The PageIndicators override returns a tuple, but that annotation is
         // outside this file's incremental type-checking scope.
-        /** @type {any} */
-        const pageIndicatorActor = this._pageIndicator;
-        this._pagerBox.add_child(pageIndicatorActor);
+        // @ts-expect-error PageIndicators is a Clutter.Actor at runtime
+        this._pagerBox.add_child(this._pageIndicator);
         this._pageIndicator.setReactive(false);
 
         this._emojiPager.connect('notify::delta', () => {
@@ -850,6 +937,11 @@ const EmojiSelection = GObject.registerClass({
         super.vfunc_map();
     }
 
+    /**
+     * @param {string} sectionLabel
+     * @param {number} page
+     * @param {number} nPages
+     */
     _onPageChanged(sectionLabel, page, nPages) {
         this._curPage = page;
         this._pageIndicator.setNPages(nPages);
@@ -866,6 +958,7 @@ const EmojiSelection = GObject.registerClass({
             this._emojiPager.delta / this._emojiPager.width);
     }
 
+    /** @param {string} emoji */
     _findSection(emoji) {
         for (let i = 0; i < this._sections.length; i++) {
             if (this._sections[i].first === emoji)
@@ -946,6 +1039,10 @@ const EmojiSelection = GObject.registerClass({
         return actor;
     }
 
+    /**
+     * @param {number} nCols
+     * @param {number} nRows
+     */
     setRatio(nCols, nRows) {
         this._emojiPager.setRatio(Math.floor(nCols), Math.floor(nRows) - 1);
         this._bottomRow.setRatio(nCols, 1);
@@ -983,11 +1080,10 @@ export class KeyboardManager extends Signals.EventEmitter {
         });
 
         const allowedModes = Shell.ActionMode.ALL & ~Shell.ActionMode.LOCK_SCREEN;
-        /** @type {any} */
-        const bottomSide = St.Side.BOTTOM;
         const bottomDragGesture = new Shell.EdgeDragGesture({
             name: 'OSK show bottom drag',
-            side: bottomSide,
+            // @ts-expect-error The generated constructor uses the wrong enum
+            side: St.Side.BOTTOM,
         });
         bottomDragGesture.connect('may-recognize', () => {
             return allowedModes & Main.actionMode;
@@ -1045,6 +1141,7 @@ export class KeyboardManager extends Signals.EventEmitter {
         return this._keyboard && this._keyboard.visible;
     }
 
+    /** @param {number} monitor */
     open(monitor) {
         Main.layoutManager.keyboardIndex = monitor;
 
@@ -1057,6 +1154,10 @@ export class KeyboardManager extends Signals.EventEmitter {
             this._keyboard.close();
     }
 
+    /**
+     * @param {string} text
+     * @param {() => void} callback
+     */
     addSuggestion(text, callback) {
         if (this._keyboard)
             this._keyboard.addSuggestion(text, callback);
@@ -1067,6 +1168,7 @@ export class KeyboardManager extends Signals.EventEmitter {
             this._keyboard.resetSuggestions();
     }
 
+    /** @param {boolean} visible */
     setSuggestionsVisible(visible) {
         this._keyboard?.setSuggestionsVisible(visible);
     }
@@ -1077,8 +1179,8 @@ export const Keyboard = GObject.registerClass({
         'visibility-changed': {},
     },
 }, class Keyboard extends St.BoxLayout {
-    _init() {
-        super._init({
+    constructor() {
+        super({
             name: 'keyboard',
             reactive: true,
             // Keyboard models are defined in LTR, we must override
@@ -1087,15 +1189,18 @@ export const Keyboard = GObject.registerClass({
             text_direction: Clutter.TextDirection.LTR,
             orientation: Clutter.Orientation.VERTICAL,
         });
+        /** @type {boolean | Clutter.Actor | string} */
         this._focusInExtendedKeys = false;
         this._emojiActive = false;
 
         this._languagePopup = null;
+        /** @type {Meta.Window | null} */
         this._focusWindow = null;
         this._focusWindowStartY = null;
 
         this._latched = false; // current level is latched
         this._modifiers = new Set();
+        /** @type {Map<number, InstanceType<typeof Key>[]>} */
         this._modifierKeys = new Map();
 
         this._suggestions = null;
@@ -1130,6 +1235,7 @@ export const Keyboard = GObject.registerClass({
         super.visible = visible;
     }
 
+    /** @param {FocusTracker} focusTracker */
     _onFocusPositionChanged(focusTracker) {
         const rect = focusTracker.getCurrentRect();
         this.setCursorLocation(focusTracker.currentWindow, rect.x, rect.y, rect.width, rect.height);
@@ -1168,6 +1274,7 @@ export const Keyboard = GObject.registerClass({
 
         this._keyboardController = new KeyboardController();
 
+        /** @type {InstanceType<typeof KeyContainer> | null} */
         this._currentPage = null;
 
         this._suggestions = new Suggestions();
@@ -1214,6 +1321,10 @@ export const Keyboard = GObject.registerClass({
             purpose === Clutter.InputContentPurpose.TERMINAL;
     }
 
+    /**
+     * @param {KeyboardController} controller
+     * @param {Clutter.InputContentHintFlags} contentHints
+     */
     _onContentHintsChanged(controller, contentHints) {
         this._contentHints = contentHints;
 
@@ -1229,6 +1340,7 @@ export const Keyboard = GObject.registerClass({
         }
     }
 
+    /** @param {boolean} userInputHappened */
     _updateLevelFromHints(userInputHappened) {
         // If the latch is enabled, avoid level changes
         if (this._latched)
@@ -1316,8 +1428,13 @@ export const Keyboard = GObject.registerClass({
         }
     }
 
+    /**
+     * @param {string} groupName
+     * @param {Clutter.InputContentPurpose} purpose
+     */
     _updateLayout(groupName, purpose) {
         let keyboardModel = null;
+        /** @type {Record<string, InstanceType<typeof KeyContainer>>} */
         const layers = {};
         const layout = new Clutter.Actor({
             layout_manager: new Clutter.BinLayout(),
@@ -1381,12 +1498,18 @@ export const Keyboard = GObject.registerClass({
         this._layers = layers;
     }
 
+    /**
+     * @param {LayoutKey[]} keys
+     * @param {InstanceType<typeof KeyContainer>} layout
+     * @param {boolean} emojiVisible
+     */
     _addRowKeys(keys, layout, emojiVisible) {
         let accumulatedWidth = 0;
         for (let i = 0; i < keys.length; ++i) {
             const key = keys[i];
             const {strings} = key;
             const commitString = strings?.shift();
+            const keyval = key.keyval ? parseInt(key.keyval, 16) : 0;
 
             if (key.action === 'emoji' && !emojiVisible) {
                 accumulatedWidth = key.width ?? 1;
@@ -1417,13 +1540,13 @@ export const Keyboard = GObject.registerClass({
                     } else if (key.action === 'emoji') {
                         this._toggleEmoji();
                     } else if (key.action === 'modifier') {
-                        this._toggleModifier(key.keyval);
+                        this._toggleModifier(keyval);
                     } else if (key.action === 'delete') {
                         this._keyboardController.toggleDelete(true);
                         this._keyboardController.toggleDelete(false);
                         this._updateLevelFromHints(true);
                     } else if (!this._longPressed && key.action === 'levelSwitch') {
-                        this._setActiveLevel(key.level);
+                        this._setActiveLevel(String(key.level));
                         this._setLatched(
                             key.level === 1 &&
                                 key.iconName === 'osk-caps-lock-symbolic');
@@ -1432,9 +1555,9 @@ export const Keyboard = GObject.registerClass({
                     this._longPressed = false;
                 });
             } else if (key.keyval) {
-                button.connect('keyval', (_actor, keyval) => {
-                    this._keyboardController.keyvalPress(keyval);
-                    this._keyboardController.keyvalRelease(keyval);
+                button.connect('keyval', (_actor, emittedKeyval) => {
+                    this._keyboardController.keyvalPress(emittedKeyval);
+                    this._keyboardController.keyvalRelease(emittedKeyval);
                     this._updateLevelFromHints(true);
                 });
             } else {
@@ -1451,7 +1574,7 @@ export const Keyboard = GObject.registerClass({
                 layout.shiftKeys.push(button);
                 if (key.level === 'shift') {
                     button.connect('long-press', () => {
-                        this._setActiveLevel(key.level);
+                        this._setActiveLevel('shift');
                         this._setLatched(true);
                         this._longPressed = true;
                     });
@@ -1464,9 +1587,9 @@ export const Keyboard = GObject.registerClass({
             }
 
             if (key.action === 'modifier') {
-                const modifierKeys = this._modifierKeys[key.keyval] || [];
+                const modifierKeys = this._modifierKeys.get(keyval) || [];
                 modifierKeys.push(button);
-                this._modifierKeys[key.keyval] = modifierKeys;
+                this._modifierKeys.set(keyval, modifierKeys);
             }
 
             if (key.action || key.keyval)
@@ -1476,21 +1599,27 @@ export const Keyboard = GObject.registerClass({
         }
     }
 
+    /** @param {boolean} latched */
     _setLatched(latched) {
         this._latched = latched;
         this._setCurrentLevelLatched(this._currentPage, this._latched);
     }
 
+    /**
+     * @param {number} keyval
+     * @param {boolean} enabled
+     */
     _setModifierEnabled(keyval, enabled) {
         if (enabled)
             this._modifiers.add(keyval);
         else
             this._modifiers.delete(keyval);
 
-        for (const key of this._modifierKeys[keyval])
+        for (const key of this._modifierKeys.get(keyval) ?? [])
             key.setLatched(enabled);
     }
 
+    /** @param {number} keyval */
     _toggleModifier(keyval) {
         const isActive = this._modifiers.has(keyval);
         this._setModifierEnabled(keyval, !isActive);
@@ -1501,6 +1630,7 @@ export const Keyboard = GObject.registerClass({
             this._setModifierEnabled(keyval, false);
     }
 
+    /** @param {Clutter.Actor} keyActor */
     _popupLanguageMenu(keyActor) {
         if (this._languagePopup)
             this._languagePopup.destroy();
@@ -1515,6 +1645,7 @@ export const Keyboard = GObject.registerClass({
             this._currentPage.visible = !this._emojiActive;
     }
 
+    /** @param {boolean} active */
     _setEmojiActive(active) {
         this._emojiActive = active;
         this._emojiSelection.visible = this._emojiActive;
@@ -1525,6 +1656,10 @@ export const Keyboard = GObject.registerClass({
         this._setEmojiActive(!this._emojiActive);
     }
 
+    /**
+     * @param {InstanceType<typeof KeyContainer>} layout
+     * @param {boolean} latched
+     */
     _setCurrentLevelLatched(layout, latched) {
         for (let i = 0; i < layout.shiftKeys.length; i++) {
             const key = layout.shiftKeys[i];
@@ -1577,6 +1712,10 @@ export const Keyboard = GObject.registerClass({
         this._updateKeys();
     }
 
+    /**
+     * @param {KeyboardController} controller
+     * @param {Clutter.InputPanelState} state
+     */
     _onKeyboardStateChanged(controller, state) {
         let enabled;
         if (state === Clutter.InputPanelState.OFF)
@@ -1597,6 +1736,7 @@ export const Keyboard = GObject.registerClass({
             this.close(true);
     }
 
+    /** @param {string} activeLevel */
     _setActiveLevel(activeLevel) {
         const layers = this._layers;
         const currentPage = layers[activeLevel];
@@ -1754,12 +1894,14 @@ export const Keyboard = GObject.registerClass({
         global.compositor.enable_unredirect();
     }
 
+    /** @param {number} delta */
     gestureProgress(delta) {
         this._gestureInProgress = true;
         Main.layoutManager.keyboardBox.show();
         const progress = Math.min(delta, this.height) / this.height;
         this.translation_y = -this.height * progress;
         this.opacity = 255 * progress;
+        /** @type {Meta.WindowActor | null} */
         const windowActor = this._focusWindow?.get_compositor_private();
         if (windowActor)
             windowActor.y = this._focusWindowStartY - (this.height * progress);
@@ -1781,10 +1923,15 @@ export const Keyboard = GObject.registerClass({
             this._suggestions.clear();
     }
 
+    /** @param {boolean} visible */
     setSuggestionsVisible(visible) {
         this._suggestions?.setVisible(visible);
     }
 
+    /**
+     * @param {string} text
+     * @param {() => void} callback
+     */
     addSuggestion(text, callback) {
         if (!this._suggestions)
             return;
@@ -1799,6 +1946,10 @@ export const Keyboard = GObject.registerClass({
         this._showIdleId = 0;
     }
 
+    /**
+     * @param {Meta.Window} window
+     * @param {number} finalY
+     */
     _windowSlideAnimationComplete(window, finalY) {
         // Synchronize window positions again.
         const frameRect = window.get_frame_rect();
@@ -1814,7 +1965,12 @@ export const Keyboard = GObject.registerClass({
             this._onFocusWindowMoving.bind(this));
     }
 
+    /**
+     * @param {Meta.Window} window
+     * @param {boolean} show
+     */
     _animateWindow(window, show) {
+        /** @type {Meta.WindowActor | null} */
         const windowActor = window.get_compositor_private();
         if (!windowActor)
             return;
@@ -1856,6 +2012,7 @@ export const Keyboard = GObject.registerClass({
         this.close(true);
     }
 
+    /** @param {Meta.Window | null} window */
     _setFocusWindow(window) {
         if (this._focusWindow === window)
             return;
@@ -1863,6 +2020,7 @@ export const Keyboard = GObject.registerClass({
         if (this._keyboardVisible && this._focusWindow)
             this._animateWindow(this._focusWindow, false);
 
+        /** @type {Meta.WindowActor | null} */
         const windowActor = window?.get_compositor_private();
         windowActor?.remove_transition('y');
         this._focusWindowStartY = windowActor ? windowActor.y : null;
@@ -1873,6 +2031,13 @@ export const Keyboard = GObject.registerClass({
         this._focusWindow = window;
     }
 
+    /**
+     * @param {Meta.Window | null} window
+     * @param {number} [x]
+     * @param {number} [y]
+     * @param {number} [w]
+     * @param {number} [h]
+     */
     setCursorLocation(window, x, y, w, h) {
         const monitor = Main.layoutManager.keyboardMonitor;
 
@@ -1898,6 +2063,10 @@ export const Keyboard = GObject.registerClass({
 });
 
 class KeyboardController extends Signals.EventEmitter {
+    /** @type {boolean | undefined} */
+    _oskCompletionEnabled;
+    /** @type {boolean | undefined} */
+    _deleteEnabled;
     constructor() {
         super();
 
@@ -1914,7 +2083,12 @@ class KeyboardController extends Signals.EventEmitter {
         Main.inputMethod.connectObject(
             'notify::content-purpose', this._onPurposeHintsChanged.bind(this),
             'notify::content-hints', this._onContentHintsChanged.bind(this),
-            'input-panel-state', (o, state) => this.emit('panel-state', state), this);
+            'input-panel-state',
+            /**
+             * @param {Clutter.InputMethod} o
+             * @param {Clutter.InputPanelState} state
+             */
+            (o, state) => this.emit('panel-state', state), this);
     }
 
     get purpose() {
@@ -1934,18 +2108,24 @@ class KeyboardController extends Signals.EventEmitter {
         this.emit('group-changed');
     }
 
+    /**
+     * @param {ReturnType<typeof InputSourceManager.getInputSourceManager>} inputSourceManager
+     * @param {object} _oldSource
+     */
     _onSourceChanged(inputSourceManager, _oldSource) {
         const source = inputSourceManager.currentSource;
         this._currentSource = source;
         this.emit('group-changed');
     }
 
+    /** @param {NonNullable<typeof Main.inputMethod>} method */
     _onPurposeHintsChanged(method) {
         const purpose = method.content_purpose;
         this._purpose = purpose;
         this.emit('purpose-changed', purpose);
     }
 
+    /** @param {NonNullable<typeof Main.inputMethod>} method */
     _onContentHintsChanged(method) {
         const contentHints = method.content_hints;
         this._contentHints = contentHints;
@@ -1969,6 +2149,10 @@ class KeyboardController extends Signals.EventEmitter {
         return this._currentSource.xkbId;
     }
 
+    /**
+     * @param {Set<number>} modifiers
+     * @param {Clutter.EventType} type
+     */
     _forwardModifiers(modifiers, type) {
         for (const keyval of modifiers) {
             if (type === Clutter.EventType.KEY_PRESS)
@@ -1978,6 +2162,7 @@ class KeyboardController extends Signals.EventEmitter {
         }
     }
 
+    /** @param {string} string */
     _getKeyvalsFromString(string) {
         const keyvals = [];
         for (const unicode of string) {
@@ -1992,6 +2177,10 @@ class KeyboardController extends Signals.EventEmitter {
         return keyvals;
     }
 
+    /**
+     * @param {string} str
+     * @param {Set<number>} [modifiers]
+     */
     async commit(str, modifiers) {
         const keyvals = this._getKeyvalsFromString(str);
 
@@ -2029,6 +2218,7 @@ class KeyboardController extends Signals.EventEmitter {
         Main.inputMethod.commit(str);
     }
 
+    /** @param {boolean} enabled */
     async setOskCompletion(enabled) {
         if (this._oskCompletionEnabled === enabled)
             return;
@@ -2039,16 +2229,22 @@ class KeyboardController extends Signals.EventEmitter {
         Main.inputMethod.update();
     }
 
+    /** @param {number} keyval */
     keyvalPress(keyval) {
         this._virtualDevice.notify_keyval(Clutter.get_current_event_time() * 1000,
             keyval, Clutter.KeyState.PRESSED);
     }
 
+    /** @param {number} keyval */
     keyvalRelease(keyval) {
         this._virtualDevice.notify_keyval(Clutter.get_current_event_time() * 1000,
             keyval, Clutter.KeyState.RELEASED);
     }
 
+    /**
+     * @param {string} text
+     * @param {number} cursor
+     */
     _previousWordPosition(text, cursor) {
         const upToCursor = [...text].slice(0, cursor).join('');
         const jsStringPos = Math.max(0, upToCursor.search(/\s+\S+\s*$/));
@@ -2056,6 +2252,7 @@ class KeyboardController extends Signals.EventEmitter {
         return charPos;
     }
 
+    /** @param {boolean} enabled */
     toggleDelete(enabled) {
         if (this._deleteEnabled === enabled)
             return;
@@ -2081,6 +2278,11 @@ class KeyboardController extends Signals.EventEmitter {
         }
 
         if (enabled) {
+            /**
+             * @param {string} text
+             * @param {number} cursor
+             * @param {number} anchor
+             */
             const func = (text, cursor, anchor) => {
                 if (cursor === 0 && anchor === 0)
                     return;
