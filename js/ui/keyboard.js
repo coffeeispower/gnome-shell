@@ -42,15 +42,21 @@ class AspectContainer extends St.Widget {
     constructor(params) {
         super(params);
         this._ratio = 1;
+        this._radioOrig = [1, 1];
     }
 
     /**
-     * @param {number} relWidth
-     * @param {number} relHeight
+     * @param {[number, number]} ratio
      */
-    setRatio(relWidth, relHeight) {
+    set ratio(ratio) {
+        const [relWidth, relHeight] = ratio;
         this._ratio = relWidth / relHeight;
+        this._ratioOrig = ratio;
         this.queue_relayout();
+    }
+
+    get ratio() {
+        return this._ratioOrig;
     }
 
     /**
@@ -590,6 +596,8 @@ const EmojiPager = GObject.registerClass({
         this._delta = 0;
         /** @type {number | null} */
         this._width = null;
+        this._nRows = 0;
+        this._nCols = 0;
 
         const swipeTracker = new SwipeTracker.SwipeTracker(this,
             Clutter.Orientation.HORIZONTAL,
@@ -851,12 +859,10 @@ const EmojiPager = GObject.registerClass({
     }
 
     /**
-     * @param {number} nCols
-     * @param {number} nRows
+     * @param {[number, number]} ratio
      */
-    setRatio(nCols, nRows) {
-        this._nCols = nCols;
-        this._nRows = nRows;
+    set ratio(ratio) {
+        [this._nCols, this._nRows] = ratio;
         this._initPagingInfo();
     }
 });
@@ -1040,13 +1046,12 @@ const EmojiSelection = GObject.registerClass({
     }
 
     /**
-     * @param {number} nCols
-     * @param {number} nRows
+     * @param {[number, number]} ratio
      */
-    setRatio(nCols, nRows) {
-        this._emojiPager.setRatio(Math.floor(nCols), Math.floor(nRows) - 1);
-        this._bottomRow.setRatio(nCols, 1);
-
+    set ratio(ratio) {
+        const [nCols, nRows] = ratio;
+        this._emojiPager.ratio = [Math.floor(nCols), Math.floor(nRows) - 1];
+        this._bottomRow.ratio = [nCols, 1];
         // (Re)attach actors so the emoji panel fits the ratio and
         // the bottom row is ensured to take 1 row high.
         if (this._pagerBox.get_parent())
@@ -1173,7 +1178,9 @@ export class KeyboardManager extends Signals.EventEmitter {
         this._keyboard?.setSuggestionsVisible(visible);
     }
 }
-
+/** @typedef {{mode: 'centered', aspectContainer: InstanceType<typeof AspectContainer>, currentLayout: Clutter.Actor | null, layers: Record<string, InstanceType<typeof KeyContainer>>, currentPage: InstanceType<typeof KeyContainer> | null}} CenteredKeyboardLayoutState */
+/** @typedef {{mode: 'split'}} SplitKeyboardLayoutState */
+/** @typedef {CenteredKeyboardLayoutState | SplitKeyboardLayoutState} KeyboardLayoutModeDependentState */
 export const Keyboard = GObject.registerClass({
     Signals: {
         'visibility-changed': {},
@@ -1274,17 +1281,14 @@ export const Keyboard = GObject.registerClass({
 
         this._keyboardController = new KeyboardController();
 
-        /** @type {InstanceType<typeof KeyContainer> | null} */
-        this._currentPage = null;
-
         this._suggestions = new Suggestions();
         this.add_child(this._suggestions);
 
-        this._aspectContainer = new AspectContainer({
-            layout_manager: new Clutter.BinLayout(),
-            y_expand: true,
-        });
-        this.add_child(this._aspectContainer);
+        const ENABLE_SPLIT_LAYOUT = true;
+
+
+        /** @type {KeyboardLayoutModeDependentState} */
+        this._layoutState = ENABLE_SPLIT_LAYOUT ? this._createSplitLayoutState() : this._createCenteredLayoutState();
 
         this._emojiSelection = new EmojiSelection();
         this._emojiSelection.connect('toggle', this._toggleEmoji.bind(this));
@@ -1294,7 +1298,7 @@ export const Keyboard = GObject.registerClass({
         });
 
         this._emojiSelection.hide();
-        this._aspectContainer.add_child(this._emojiSelection);
+        this._addEmojiSelectionToLayout();
 
         this._updateKeys();
 
@@ -1308,6 +1312,43 @@ export const Keyboard = GObject.registerClass({
             this._onKeyFocusChanged.bind(this), this);
 
         this._relayout();
+    }
+
+    /** @returns {CenteredKeyboardLayoutState} */
+    _createCenteredLayoutState() {
+        const aspectContainer = new AspectContainer({
+            layout_manager: new Clutter.BinLayout(),
+            y_expand: true,
+        });
+        this.add_child(aspectContainer);
+
+        return {
+            mode: 'centered',
+            aspectContainer,
+            currentLayout: null,
+            layers: {},
+            currentPage: null,
+        };
+    }
+
+    /**
+     * @returns {SplitKeyboardLayoutState}
+     */
+    _createSplitLayoutState() {
+        return {
+            mode: 'split',
+        };
+    }
+
+    _addEmojiSelectionToLayout() {
+        const state = this._layoutState;
+        switch (state.mode) {
+        case 'centered':
+            state.aspectContainer.add_child(this._emojiSelection);
+            break;
+        case 'split':
+            throw new Error("Can't add emoji selection to split layout: Not implemented yet");
+        }
     }
 
     _shouldShowEmoji() {
@@ -1351,7 +1392,7 @@ export const Keyboard = GObject.registerClass({
             return;
         }
 
-        if (!this._layers['shift'])
+        if (!this._hasLevel('shift'))
             return;
 
         if ((this._contentHints & Clutter.InputContentHintFlags.UPPERCASE) !== 0) {
@@ -1395,8 +1436,34 @@ export const Keyboard = GObject.registerClass({
             return;
         }
 
-        if (userInputHappened && this._currentPage === this._layers['shift'])
+        if (userInputHappened && this._isActiveLevel('shift'))
             this._setActiveLevel('default');
+    }
+
+    /** @param {string} level */
+    _hasLevel(level) {
+        const state = this._layoutState;
+        switch (state.mode) {
+        case 'centered':
+            return !!state.layers[level];
+        case 'split':
+            throw new Error('_hasLevel not yet implemented for split keyboard');
+        default:
+            return false;
+        }
+    }
+
+    /** @param {string} level */
+    _isActiveLevel(level) {
+        const state = this._layoutState;
+        switch (state.mode) {
+        case 'centered':
+            return state.currentPage === state.layers[level];
+        case 'split':
+            throw new Error('_isActiveLevel not yet implemented for split keyboard');
+        default:
+            return false;
+        }
     }
 
     _onKeyFocusChanged() {
@@ -1434,13 +1501,6 @@ export const Keyboard = GObject.registerClass({
      */
     _updateLayout(groupName, purpose) {
         let keyboardModel = null;
-        /** @type {Record<string, InstanceType<typeof KeyContainer>>} */
-        const layers = {};
-        const layout = new Clutter.Actor({
-            layout_manager: new Clutter.BinLayout(),
-            x_expand: true,
-            y_expand: true,
-        });
 
         if (purpose === Clutter.InputContentPurpose.DIGITS) {
             keyboardModel = new KeyboardModel('digits');
@@ -1476,6 +1536,29 @@ export const Keyboard = GObject.registerClass({
 
         this._emojiVisible = this._shouldShowEmoji();
 
+        const state = this._layoutState;
+        switch (state.mode) {
+        case 'centered':
+            this._updateCenteredLayout(state, keyboardModel);
+            break;
+        case 'split':
+            throw new Error('_updateSplitLayout not implemented yet');
+        }
+    }
+
+    /**
+     * @param {CenteredKeyboardLayoutState} state
+     * @param {KeyboardModel} keyboardModel
+     */
+    _updateCenteredLayout(state, keyboardModel) {
+        /** @type {Record<string, InstanceType<typeof KeyContainer>>} */
+        const layers = {};
+        const layout = new Clutter.Actor({
+            layout_manager: new Clutter.BinLayout(),
+            x_expand: true,
+            y_expand: true,
+        });
+
         keyboardModel.levels.forEach(currentLevel => {
             const levelLayout = new KeyContainer();
             levelLayout.shiftKeys = [];
@@ -1492,10 +1575,10 @@ export const Keyboard = GObject.registerClass({
             levelLayout.hide();
         });
 
-        this._aspectContainer.add_child(layout);
-        this._currentLayout?.destroy();
-        this._currentLayout = layout;
-        this._layers = layers;
+        state.aspectContainer.add_child(layout);
+        state.currentLayout?.destroy();
+        state.currentLayout = layout;
+        state.layers = layers;
     }
 
     /**
@@ -1602,7 +1685,20 @@ export const Keyboard = GObject.registerClass({
     /** @param {boolean} latched */
     _setLatched(latched) {
         this._latched = latched;
-        this._setCurrentLevelLatched(this._currentPage, this._latched);
+        this._setActiveLevelLatched(latched);
+    }
+
+    /** @param {boolean} latched */
+    _setActiveLevelLatched(latched) {
+        const state = this._layoutState;
+        switch (state.mode) {
+        case 'centered':
+            if (state.currentPage)
+                this._setCurrentLevelLatched(state.currentPage, latched);
+            break;
+        case 'split':
+            throw new Error('_setActiveLevelLatched not implemented for split layout');
+        }
     }
 
     /**
@@ -1641,8 +1737,15 @@ export const Keyboard = GObject.registerClass({
     }
 
     _updateCurrentPageVisible() {
-        if (this._currentPage)
-            this._currentPage.visible = !this._emojiActive;
+        const state = this._layoutState;
+        switch (state.mode) {
+        case 'centered':
+            if (state.currentPage)
+                state.currentPage.visible = !this._emojiActive;
+            break;
+        case 'split':
+            throw new Error('_updateCurrentPageVisible not implemented for split layout');
+        }
     }
 
     /** @param {boolean} active */
@@ -1724,29 +1827,44 @@ export const Keyboard = GObject.registerClass({
 
     /** @param {string} activeLevel */
     _setActiveLevel(activeLevel) {
-        const layers = this._layers;
-        const currentPage = layers[activeLevel];
+        const state = this._layoutState;
+        switch (state.mode) {
+        case 'centered':
+            this._setCenteredActiveLevel(state, activeLevel);
+            break;
+        case 'split':
+            throw new Error('_setSplitActiveLevel not implemented yet');
+        }
+    }
 
-        if (this._currentPage === currentPage) {
+    /**
+     * @param {CenteredKeyboardLayoutState} state
+     * @param {string} activeLevel
+     */
+    _setCenteredActiveLevel(state, activeLevel) {
+        const currentPage = state.layers[activeLevel];
+
+        if (state.currentPage === currentPage) {
             this._updateCurrentPageVisible();
             return;
         }
 
-        if (this._currentPage != null) {
-            this._setCurrentLevelLatched(this._currentPage, false);
-            this._currentPage.disconnect(this._currentPage._destroyID);
-            this._currentPage.hide();
-            delete this._currentPage._destroyID;
+        if (state.currentPage != null) {
+            this._setCurrentLevelLatched(state.currentPage, false);
+            state.currentPage.disconnect(state.currentPage._destroyID);
+            state.currentPage.hide();
+            delete state.currentPage._destroyID;
         }
 
         this._disableAllModifiers();
-        this._currentPage = currentPage;
-        this._currentPage._destroyID = this._currentPage.connect('destroy', () => {
-            this._currentPage = null;
+        state.currentPage = currentPage;
+        state.currentPage._destroyID = state.currentPage.connect('destroy', () => {
+            state.currentPage = null;
         });
         this._updateCurrentPageVisible();
-        const [columns, rows] = this._currentPage.ratio;
-        this._emojiSelection.setRatio(columns, rows);
+        const [columns, rows] = state.currentPage.ratio;
+        state.aspectContainer.ratio = [columns, rows];
+        this._emojiSelection.ratio = [columns, rows];
     }
 
     _clearKeyboardRestTimer() {
