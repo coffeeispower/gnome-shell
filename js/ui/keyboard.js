@@ -252,7 +252,7 @@ class Suggestions extends St.BoxLayout {
         super({
             style_class: 'word-suggestions',
             orientation: Clutter.Orientation.HORIZONTAL,
-            x_align: Clutter.ActorAlign.START,
+            x_align: Clutter.ActorAlign.START
         });
         this._suggestionButtons = new Set();
         this._suggestionsVisible = true;
@@ -261,7 +261,8 @@ class Suggestions extends St.BoxLayout {
             accessible_name: _('Keyboard Settings'),
             can_focus: false,
             icon_name: 'emblem-system-symbolic',
-            style_class: 'icon-button flat',
+            style_class: 'icon-button flat keyboard-settings',
+            
         });
         this.settingsButton.connect('clicked', () => {
             this.emit('settings-requested');
