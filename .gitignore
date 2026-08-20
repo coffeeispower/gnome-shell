@@ -12,3 +12,4 @@ subprojects/libshew
 node_modules
 __pycache__
 .wraplock
+/@girs/

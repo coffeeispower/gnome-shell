@@ -1,0 +1,14 @@
+{
+    "compilerOptions": {
+        "allowJs": true,
+        "checkJs": false,
+        "noEmit": true,
+        "module": "NodeNext",
+        "moduleResolution": "NodeNext",
+        "target": "ES2023"
+    },
+    "include": [
+        "js/**/*.js",
+        "@girs/**/*.d.ts"
+    ]
+}
