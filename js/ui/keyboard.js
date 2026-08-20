@@ -209,7 +209,7 @@ class KeyContainer extends St.Widget {
     }
 
     /** @returns {[number, number]} */
-    getRatio() {
+    get ratio() {
         return [this._maxCols, this._nRows];
     }
 });
@@ -425,7 +425,7 @@ class KeyboardModel {
         return JSON.parse(decoder.decode(contents));
     }
 
-    getLevels() {
+    get levels() {
         return this._model.levels;
     }
 
@@ -443,7 +443,7 @@ class FocusTracker extends Signals.EventEmitter {
 
         global.display.connectObject(
             'notify::focus-window', () => {
-                this._setCurrentWindow(global.display.focus_window);
+                this.currentWindow = global.display.focus_window;
                 this.emit('window-changed', this._currentWindow);
             },
             'grab-op-begin',
@@ -459,7 +459,7 @@ class FocusTracker extends Signals.EventEmitter {
                     this.emit('window-grabbed');
             }, this);
 
-        this._setCurrentWindow(global.display.focus_window);
+        this.currentWindow = global.display.focus_window;
 
         /* Valid for wayland clients */
         Main.inputMethod.connectObject('cursor-location-changed',
@@ -503,7 +503,7 @@ class FocusTracker extends Signals.EventEmitter {
     }
 
     /** @param {Meta.Window | null} window */
-    _setCurrentWindow(window) {
+    set currentWindow(window) {
         this._currentWindow?.disconnectObject(this);
 
         this._currentWindow = window;
@@ -540,7 +540,7 @@ class FocusTracker extends Signals.EventEmitter {
         this.emit('position-changed');
     }
 
-    getCurrentRect() {
+    get currentRect() {
         const rect = {
             x: this._rect.origin.x,
             y: this._rect.origin.y,
@@ -1237,7 +1237,7 @@ export const Keyboard = GObject.registerClass({
 
     /** @param {FocusTracker} focusTracker */
     _onFocusPositionChanged(focusTracker) {
-        const rect = focusTracker.getCurrentRect();
+        const rect = focusTracker.currentRect;
         this.setCursorLocation(focusTracker.currentWindow, rect.x, rect.y, rect.width, rect.height);
         this._updateLevelFromHints(true);
     }
@@ -1476,7 +1476,7 @@ export const Keyboard = GObject.registerClass({
 
         this._emojiVisible = this._shouldShowEmoji();
 
-        keyboardModel.getLevels().forEach(currentLevel => {
+        keyboardModel.levels.forEach(currentLevel => {
             const levelLayout = new KeyContainer();
             levelLayout.shiftKeys = [];
             levelLayout.mode = currentLevel.mode;
@@ -1759,8 +1759,7 @@ export const Keyboard = GObject.registerClass({
             this._currentPage = null;
         });
         this._updateCurrentPageVisible();
-        const [columns, rows] = this._currentPage.getRatio();
-        this._aspectContainer.setRatio(columns, rows);
+        const [columns, rows] = this._currentPage.ratio;
         this._emojiSelection.setRatio(columns, rows);
     }
 
