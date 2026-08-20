@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # This script ensures that all dependencies required to build and run
 # a GNOME Shell system extension are present in:

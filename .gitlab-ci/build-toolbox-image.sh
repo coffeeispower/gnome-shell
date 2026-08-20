@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # vi: sw=2 ts=4
 
 set -e

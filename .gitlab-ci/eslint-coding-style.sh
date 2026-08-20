@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 SRCDIR=$(realpath $(dirname $0)/..)
 OUTDIR=$(mktemp --directory --tmpdir=$SRCDIR)
