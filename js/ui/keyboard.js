@@ -1488,7 +1488,7 @@ export const Keyboard = GObject.registerClass({
 
         if (!this._showIdleId) {
             this._showIdleId = GLib.idle_add_once(GLib.PRIORITY_DEFAULT_IDLE, () => {
-                this.open(Main.layoutManager.focusIndex);
+                this.open(Boolean(Main.layoutManager.focusIndex));
                 this._showIdleId = 0;
             });
             GLib.Source.set_name_by_id(this._showIdleId, '[gnome-shell] this.open');
@@ -1820,7 +1820,7 @@ export const Keyboard = GObject.registerClass({
             enabled = false;
 
         if (enabled)
-            this.open(Main.layoutManager.focusIndex);
+            this.open(Boolean(Main.layoutManager.focusIndex));
         else
             this.close(true);
     }

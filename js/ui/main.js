@@ -55,57 +55,103 @@ const WELCOME_DIALOG_LAST_TOUR_CHANGE = '40.beta';
 const LOG_DOMAIN = 'GNOME Shell';
 const GNOMESHELL_STARTED_MESSAGE_ID = 'f3ea493c22934e26811cd62abe8e203a';
 
+/** @type {Components.ComponentManager} */
 export let componentManager = null;
+/** @type {ExtensionSystem.ExtensionManager} */
 export let extensionManager = null;
+/** @type {Panel.Panel} */
 export let panel = null;
+/** @type {Overview.Overview} */
 export let overview = null;
+/** @type {RunDialog.RunDialog | null} */
 export let runDialog = null;
+/** @type {LookingGlass.LookingGlass | null} */
 export let lookingGlass = null;
+/** @type {InstanceType<typeof WelcomeDialog.WelcomeDialog> | null} */
 export let welcomeDialog = null;
+/** @type {WindowManager.WindowManager} */
 export let wm = null;
+/** @type {MessageTray.MessageTray} */
 export let messageTray = null;
+/** @type {ScreenShield.ScreenShield | null} */
 export let screenShield = null;
+/** @type {NotificationDaemon.NotificationDaemon} */
 export let notificationDaemon = null;
+/** @type {WindowAttentionHandler.WindowAttentionHandler} */
 export let windowAttentionHandler = null;
+/** @type {CtrlAltTab.CtrlAltTabManager} */
 export let ctrlAltTabManager = null;
+/** @type {PadOsd.PadOsdService} */
 export let padOsdService = null;
+/** @type {OsdWindow.OsdWindowManager} */
 export let osdWindowManager = null;
+/** @type {OsdMonitorLabeler.OsdMonitorLabeler} */
 export let osdMonitorLabeler = null;
+/** @type {SessionMode.SessionMode} */
 export let sessionMode = null;
+/** @type {Screenshot.ScreenshotUI} */
 export let screenshotUI = null;
+/** @type {AccessDialog.AccessDialogDBus} */
 export let shellAccessDialogDBusService = null;
+/** @type {AudioDeviceSelection.AudioDeviceSelectionDBus} */
 export let shellAudioSelectionDBusService = null;
+/** @type {ShellDBus.GnomeShell} */
 export let shellDBusService = null;
+/** @type {ShellMountOperation.GnomeShellMountOpHandler} */
 export let shellMountOpDBusService = null;
 export const screenSaverDBus = null;
 export let modalCount = 0;
 export let actionMode = Shell.ActionMode.NONE;
 export const modalActorFocusStack = [];
+/** @type {St.Widget} */
 export let uiGroup = null;
+/** @type {Magnifier.Magnifier} */
 export let magnifier = null;
+/** @type {XdndHandler.XdndHandler} */
 export let xdndHandler = null;
+/** @type {Keyboard.KeyboardManager} */
 export let keyboard = null;
+/** @type {InstanceType<typeof Layout.LayoutManager>} */
 export let layoutManager = null;
+/** @type {InstanceType<typeof KbdA11yDialog.KbdA11yDialog>} */
 export let kbdA11yDialog = null;
+/** @type {InstanceType<typeof InputMethod.InputMethod>} */
 export let inputMethod = null;
+/** @type {Introspect.IntrospectService} */
 export let introspectService = null;
+/** @type {LocatePointer.LocatePointer} */
 export let locatePointer = null;
+/** @type {InstanceType<typeof EndSessionDialog.EndSessionDialog>} */
 export let endSessionDialog = null;
+/** @type {InstanceType<typeof BreakManager.BreakManager>} */
 export let breakManager = null;
+/** @type {ShellDBus.ScreenTimeDBus} */
 export let screenTimeDBus = null;
+/** @type {InstanceType<typeof BreakManager.BreakDispatcher>} */
 export let breakManagerDispatcher = null;
+/** @type {InstanceType<typeof TimeLimitsManager.TimeLimitsManager>} */
 export let timeLimitsManager = null;
+/** @type {InstanceType<typeof TimeLimitsManager.TimeLimitsDispatcher>} */
 export let timeLimitsDispatcher = null;
+/** @type {InstanceType<typeof BrightnessManager.BrightnessManager>} */
 export let brightnessManager = null;
+/** @type {ShellDBus.BrightnessDBus} */
 export let brightnessDBus = null;
 
 let _startDate;
+/** @type {Gio.File} */
 let _defaultCssStylesheet = null;
+/** @type {Gio.File | null} */
 let _cssStylesheet = null;
+/** @type {Gio.Resource} */
 let _themeResource = null;
+/** @type {Gio.Resource} */
 let _oskResource = null;
+/** @type {Gio.Resource} */
 let _iconResource = null;
+/** @type {St.Adjustment} */
 let _workspacesAdjustment = null;
+/** @type {AdjustmentRegistry} */
 let _workspaceAdjustmentRegistry = null;
 
 Gio._promisify(Gio.File.prototype, 'delete_async');
