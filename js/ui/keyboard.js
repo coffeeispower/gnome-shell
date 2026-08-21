@@ -2100,15 +2100,24 @@ export const Keyboard = GObject.registerClass({
         if (row.length <= 1)
             return [row.map(key => this._cloneLayoutKey(key)), []];
 
-        const midpoint = this._getRowWidth(row) / 2;
+        // Non-character keys generally sit at the outside edges of a row and
+        // may be wider than character keys. Including them in the midpoint
+        // would pull characters onto the left half just because a row ends in
+        // a wide Backspace or Enter key.
+        const inputWidth = row.reduce((width, key) =>
+            width + (key.strings ? key.width ?? 1 : 0), 0);
+        const midpoint = inputWidth / 2;
         let splitIndex = 1;
         let position = 0;
         let nearestDistance = Number.POSITIVE_INFINITY;
 
         for (let i = 0; i < row.length - 1; i++) {
-            position += this._getKeyWidth(row[i]);
+            const key = row[i];
+            position += key.strings ? key.width ?? 1 : 0;
             const distance = Math.abs(midpoint - position);
-            if (distance < nearestDistance) {
+            // For an odd number of equally-sized input keys, prefer the left
+            // half for the extra key (ASDFG | HJKL, for example).
+            if (distance <= nearestDistance) {
                 nearestDistance = distance;
                 splitIndex = i + 1;
             }
