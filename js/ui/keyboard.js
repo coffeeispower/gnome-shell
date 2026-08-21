@@ -30,7 +30,7 @@ const SHELL_SCHEMA = 'org.gnome.shell';
 const SPLIT_KEYBOARD_ENABLED = 'screen-keyboard-split-enabled';
 const SPLIT_KEYBOARD_SIDE_SIZE = 'screen-keyboard-split-side-size';
 const EMOJI_PAGE_SEPARATION = 32;
-const SPLIT_KEYBOARD_MIN_SIDE_SIZE = 50;
+const SPLIT_KEYBOARD_MIN_SIDE_SIZE = 250;
 const SPLIT_KEYBOARD_MIN_GAP = 64;
 const SPLIT_KEYBOARD_HANDLE_WIDTH = 48;
 const CM = 10;
@@ -1678,12 +1678,14 @@ export const Keyboard = GObject.registerClass({
         const leftContainerWrapper = new St.Widget({
             layout_manager: new Clutter.BinLayout(),
             style_class: 'keyboard-split-key-container keyboard-split-container-left',
+            x_expand: false,
             y_expand: true,
             width: sideSize,
         });
         const rightContainerWrapper = new St.Widget({
             layout_manager: new Clutter.BinLayout(),
             style_class: 'keyboard-split-key-container keyboard-split-container-right',
+            x_expand: false,
             y_expand: true,
             width: sideSize,
         });
@@ -1784,7 +1786,7 @@ export const Keyboard = GObject.registerClass({
             const delta = gesture.get_centroid_abs().x - state.resizeStartX;
             const direction = side === 'left' ? 1 : -1;
             this.splitKeyboardSideSize =
-                state.resizeStartSize + delta * direction * 3;
+                state.resizeStartSize + delta * direction;
         });
         const endGesture = () => {
             state.resizeGrab?.dismiss();
