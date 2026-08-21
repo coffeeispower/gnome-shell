@@ -262,7 +262,7 @@ class Suggestions extends St.BoxLayout {
             can_focus: false,
             icon_name: 'emblem-system-symbolic',
             style_class: 'icon-button flat keyboard-settings',
-            
+
         });
         this.settingsButton.connect('clicked', () => {
             this.emit('settings-requested');
@@ -1257,11 +1257,52 @@ export class KeyboardManager extends Signals.EventEmitter {
 }
 /** @typedef {InstanceType<typeof KeyContainer>} KeyContainer */
 /** @typedef {InstanceType<typeof AspectContainer>} AspectContainer */
-/** @typedef {'left' | 'right'} KeyboardSide */
-/** @typedef {{keyContainers: Record<string, KeyContainer>, keyContainerWrapper: St.Widget, resizeHandle: St.Widget}} SplitKeyboardSideState */
-/** @typedef {{mode: 'centered', aspectContainer: AspectContainer, currentLayout: Clutter.Actor | null, layers: Record<string, KeyContainer>, currentPage: KeyContainer | null}} CenteredKeyboardLayoutState */
-/** @typedef {{mode: 'split', elements: {layoutContainer: St.Widget, splitContainer: St.BoxLayout, emojiContainer: AspectContainer, keyContainers: Record<KeyboardSide, SplitKeyboardSideState>}, sideSize: number, currentLevel: string | null, resizeStartX: number, resizeStartSize: number, resizeGrab: Clutter.Grab | null, resizeKeyFocus: Clutter.Actor | null, resizing: boolean}} SplitKeyboardLayoutState */
-/** @typedef {CenteredKeyboardLayoutState | SplitKeyboardLayoutState} KeyboardLayoutModeDependentState */
+
+const KEYBOARD_SIDES = /** @type {const} */ (["left", "right"])
+/**
+ * @typedef {(typeof KEYBOARD_SIDES)[number]} KeyboardSide
+ */
+
+/**
+ * @typedef {{
+ *   keyContainers: Record<string, KeyContainer>,
+ *   keyContainerWrapper: St.Widget,
+ *   resizeHandle: St.Widget
+ * }} SplitKeyboardSideState
+ */
+
+/**
+ * @typedef {{
+ *   mode: 'centered',
+ *   aspectContainer: AspectContainer,
+ *   currentLayout: Clutter.Actor | null,
+ *   layers: Record<string, KeyContainer>,
+ *   currentPage: KeyContainer | null
+ * }} CenteredKeyboardLayoutState
+ */
+
+/**
+ * @typedef {{
+ *   mode: 'split',
+ *   elements: {
+ *     layoutContainer: St.Widget,
+ *     splitContainer: St.BoxLayout,
+ *     emojiContainer: AspectContainer,
+ *     keyContainers: Record<KeyboardSide, SplitKeyboardSideState>
+ *   },
+ *   sideSize: number,
+ *   currentLevel: string | null,
+ *   resizeStartX: number,
+ *   resizeStartSize: number,
+ *   resizeGrab: Clutter.Grab | null,
+ *   resizeKeyFocus: Clutter.Actor | null,
+ *   resizing: boolean
+ * }} SplitKeyboardLayoutState
+ */
+
+/**
+ * @typedef {CenteredKeyboardLayoutState | SplitKeyboardLayoutState} KeyboardLayoutModeDependentState
+ */
 export const Keyboard = GObject.registerClass({
     Signals: {
         'visibility-changed': {},
@@ -2030,8 +2071,9 @@ export const Keyboard = GObject.registerClass({
     _updateSplitLayout(state, keyboardModel) {
         state.currentLevel = null;
 
-        for (const side of /** @type {const} */ ['left', 'right']) {
+        for (const side of KEYBOARD_SIDES) {
             const sideState = state.elements.keyContainers[side];
+
             for (const keyContainer of Object.values(sideState.keyContainers))
                 keyContainer.destroy();
             sideState.keyContainers = {};
@@ -2296,7 +2338,7 @@ export const Keyboard = GObject.registerClass({
             if (!state.currentLevel)
                 break;
 
-            for (const side of /** @type {const} */ ['left', 'right']) {
+            for (const side of KEYBOARD_SIDES) {
                 const keyContainer =
                     state.elements.keyContainers[side]
                         .keyContainers[state.currentLevel];
@@ -2357,7 +2399,7 @@ export const Keyboard = GObject.registerClass({
             if (!state.currentLevel)
                 break;
 
-            for (const side of /** @type {const} */ ['left', 'right']) {
+            for (const side of KEYBOARD_SIDES) {
                 const keyContainer =
                     state.elements.keyContainers[side]
                         .keyContainers[state.currentLevel];

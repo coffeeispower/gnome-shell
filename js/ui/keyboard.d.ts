@@ -1,4 +1,4 @@
-import type * as SwipeTracker from '../swipeTracker.js';
+import type * as SwipeTracker from './swipeTracker.js';
 
 export interface EmojiKey {
     label: string;

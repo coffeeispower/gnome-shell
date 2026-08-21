@@ -4,7 +4,7 @@ set -e
 
 srcdir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 toolsdir="$srcdir/tools"
-outdir="$srcdir/@girs"
+outdir="$srcdir/js/@girs"
 toolbox_name=gnome-shell-devel
 
 usage() {
