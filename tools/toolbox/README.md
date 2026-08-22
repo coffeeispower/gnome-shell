@@ -35,6 +35,22 @@ the project.
 
 Run the script with `--help` to see available options.
 
+When building gnome-shell, a custom Mutter build can be installed first by
+passing a local source directory:
+
+```sh
+  $ meson-build.sh --mutter-src=path/to/mutter
+```
+
+Alternatively, Mutter can be checked out from a Git repository. The optional
+revision may name a branch, tag, or commit:
+
+```sh
+  $ meson-build.sh \
+      --mutter-git=https://gitlab.gnome.org/GNOME/mutter.git \
+      --mutter-git-rev=main
+```
+
 ## meson-test.sh
 
 Run a meson project's test suite in a toolbox.

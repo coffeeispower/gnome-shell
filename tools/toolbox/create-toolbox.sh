@@ -9,7 +9,7 @@ CONFIG_FILE=${XDG_CONFIG_HOME:-$HOME/.config}/gnome-shell-toolbox-tools.conf
 
 usage() {
   cat <<-EOF
-	Usage: $(basename $0) [OPTION…]
+	Usage: $(basename "$0") [OPTION…]
 
 	Create a toolbox for gnome-shell development
 
@@ -52,7 +52,7 @@ install_extra_packages() {
 
 create_builder_config() {
   local container_id=$(podman container inspect --format='{{.Id}}' $NAME)
-  local top_srcdir=$(realpath $(dirname $0)/../..)
+  local top_srcdir=$(realpath "$(dirname "$0")/../..")
 
   cat >> $top_srcdir/.buildconfig <<-EOF
 
@@ -82,7 +82,7 @@ set_default() {
 }
 
 TEMP=$(getopt \
-  --name $(basename $0) \
+  --name "$(basename "$0")" \
   --options 'n:v:rcbh' \
   --longoptions 'name:' \
   --longoptions 'version:' \
@@ -93,7 +93,7 @@ TEMP=$(getopt \
   --longoptions 'skip-mutter' \
   --longoptions 'set-default' \
   --longoptions 'help' \
-  -- "$@") || die "Run $(basename $0) --help to see available options"
+  -- "$@") || die "Run $(basename "$0") --help to see available options"
 
 eval set -- "$TEMP"
 unset TEMP

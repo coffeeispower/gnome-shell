@@ -8,7 +8,7 @@ CONFIG_FILE=${XDG_CONFIG_HOME:-$HOME/.config}/gnome-shell-toolbox-tools.conf
 
 usage() {
   cat <<-EOF
-	Usage: $(basename $0) [OPTION…]
+	Usage: $(basename "$0") [OPTION…]
 
 	Run gnome-shell from a toolbox
 
@@ -71,7 +71,7 @@ then
 fi
 
 TEMP=$(getopt \
- --name $(basename $0) \
+ --name "$(basename "$0")" \
  --options '20t:vh' \
  --longoptions 'toolbox:' \
  --longoptions 'classic' \
@@ -86,7 +86,7 @@ TEMP=$(getopt \
  --longoptions 'force-animations' \
  --longoptions 'version' \
  --longoptions 'help' \
- -- "$@") || die "Run $(basename $0) --help to see available options"
+ -- "$@") || die "Run $(basename "$0") --help to see available options"
 
 eval set -- "$TEMP"
 unset TEMP

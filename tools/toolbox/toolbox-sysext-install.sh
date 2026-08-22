@@ -7,7 +7,7 @@ CONFIG_FILE=${XDG_CONFIG_HOME:-$HOME/.config}/gnome-shell-toolbox-tools.conf
 
 usage() {
   cat <<-EOF
-	Usage: $(basename $0) [OPTION…]
+	Usage: $(basename "$0") [OPTION…]
 
 	Extract and install a systemd-sysext extension from a toolbox
 
@@ -100,12 +100,12 @@ fi
 TOOLBOX=$DEFAULT_TOOLBOX
 
 TEMP=$(getopt \
-  --name $(basename $0) \
+  --name "$(basename "$0")" \
   --options 't:h' \
   --longoptions 'toolbox:' \
   --longoptions 'persistent' \
   --longoptions 'help' \
-  -- "$@") || die "Run $(basename $0) --help to see available options"
+  -- "$@") || die "Run $(basename "$0") --help to see available options"
 
 eval set -- "$TEMP"
 unset TEMP

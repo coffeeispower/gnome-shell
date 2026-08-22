@@ -7,7 +7,7 @@ CONFIG_FILE=${XDG_CONFIG_HOME:-$HOME/.config}/gnome-shell-toolbox-tools.conf
 
 usage() {
   cat <<-EOF
-	Usage: $(basename $0) [OPTION…]
+	Usage: $(basename "$0") [OPTION…]
 
 	Run meson project tests in a toolbox
 
@@ -53,7 +53,7 @@ fi
 TOOLBOX=$DEFAULT_TOOLBOX
 
 TEMP=$(getopt \
-  --name $(basename $0) \
+  --name "$(basename "$0")" \
   --options 't:vqh' \
   --longoptions 'toolbox:' \
   --longoptions 'gdb' \
@@ -66,7 +66,7 @@ TEMP=$(getopt \
   --longoptions 'verbose' \
   --longoptions 'quiet' \
   --longoptions 'help' \
-  -- "$@") || die "Run $(basename $0) --help to see available options"
+  -- "$@") || die "Run $(basename "$0") --help to see available options"
 
 eval set -- "$TEMP"
 unset TEMP

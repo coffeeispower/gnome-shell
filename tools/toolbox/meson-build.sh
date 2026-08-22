@@ -7,12 +7,15 @@ CONFIG_FILE=${XDG_CONFIG_HOME:-$HOME/.config}/gnome-shell-toolbox-tools.conf
 
 usage() {
   cat <<-EOF
-	Usage: $(basename $0) [OPTION…]
+	Usage: $(basename "$0") [OPTION…]
 
 	Build and install a meson project in a toolbox
 
 	Options:
 	  -t, --toolbox=TOOLBOX   Use TOOLBOX instead of the default "$DEFAULT_TOOLBOX"
+	  --mutter-src=PATH       Build Mutter from a local source directory
+	  --mutter-git=REPOSITORY Build Mutter from a Git repository
+	  --mutter-git-rev=REV    Git branch, tag or commit to build
 
 	  -Dkey=val               Option to pass to meson setup
 	  --dist                  Run meson dist
@@ -28,6 +31,51 @@ usage() {
 die() {
   echo "$@" >&2
   exit 1
+}
+
+build_mutter() {
+  local source=$1
+  local -a args
+
+  args=(-t "$TOOLBOX" -Ddevkit=enabled)
+  [[ $RECONFIGURE ]] && args+=(--reconfigure)
+  [[ $WIPE ]] && args+=(--wipe)
+  [[ $BUILD_SYSEXT ]] && args+=(--sysext)
+
+  (cd "$source" && "$SCRIPT_PATH" "${args[@]}")
+}
+
+checkout_mutter() {
+  local checkout_root
+  local revision
+
+  checkout_root=${XDG_CACHE_HOME:-$HOME/.cache}/gnome-shell-toolbox
+  mkdir -p "$checkout_root"
+  MUTTER_CHECKOUT=$(mktemp --directory \
+    --tmpdir="$checkout_root" mutter.XXXXXX)
+  trap 'rm -rf "$MUTTER_CHECKOUT"' EXIT
+
+  git clone --filter=blob:none --no-checkout \
+    "$MUTTER_GIT" "$MUTTER_CHECKOUT"
+
+  if [[ $MUTTER_GIT_REV ]]; then
+    if revision=$(git -C "$MUTTER_CHECKOUT" rev-parse --verify \
+      "${MUTTER_GIT_REV}^{commit}" 2>/dev/null); then
+      :
+    elif revision=$(git -C "$MUTTER_CHECKOUT" rev-parse --verify \
+      "origin/${MUTTER_GIT_REV}^{commit}" 2>/dev/null); then
+      :
+    else
+      git -C "$MUTTER_CHECKOUT" fetch --filter=blob:none \
+        origin "$MUTTER_GIT_REV"
+      revision=$(git -C "$MUTTER_CHECKOUT" rev-parse \
+        --verify 'FETCH_HEAD^{commit}')
+    fi
+  else
+    revision=$(git -C "$MUTTER_CHECKOUT" rev-parse --verify 'HEAD^{commit}')
+  fi
+
+  git -C "$MUTTER_CHECKOUT" checkout --detach "$revision"
 }
 
 find_toplevel() {
@@ -80,15 +128,18 @@ fi
 TOOLBOX=$DEFAULT_TOOLBOX
 
 TEMP=$(getopt \
-  --name $(basename $0) \
+  --name "$(basename "$0")" \
   --options 't:D:h' \
   --longoptions 'toolbox:' \
+  --longoptions 'mutter-src:' \
+  --longoptions 'mutter-git:' \
+  --longoptions 'mutter-git-rev:' \
   --longoptions 'dist' \
   --longoptions 'reconfigure' \
   --longoptions 'wipe' \
   --longoptions 'sysext' \
   --longoptions 'help' \
-  -- "$@") || die "Run $(basename $0) --help to see available options"
+  -- "$@") || die "Run $(basename "$0") --help to see available options"
 
 eval set -- "$TEMP"
 unset TEMP
@@ -99,6 +150,21 @@ while true; do
   case $1 in
     -t|--toolbox)
       TOOLBOX=$2
+      shift 2
+    ;;
+
+    --mutter-src)
+      MUTTER_SRC=$2
+      shift 2
+    ;;
+
+    --mutter-git)
+      MUTTER_GIT=$2
+      shift 2
+    ;;
+
+    --mutter-git-rev)
+      MUTTER_GIT_REV=$2
       shift 2
     ;;
 
@@ -138,6 +204,30 @@ while true; do
     ;;
   esac
 done
+
+if [[ $MUTTER_SRC && $MUTTER_GIT ]]; then
+  die "--mutter-src and --mutter-git cannot be used together"
+fi
+
+if [[ $MUTTER_GIT_REV && ! $MUTTER_GIT ]]; then
+  die "--mutter-git-rev requires --mutter-git"
+fi
+
+SCRIPT_PATH=$(realpath "$0")
+
+if [[ $MUTTER_GIT ]]; then
+  checkout_mutter
+  MUTTER_SRC=$MUTTER_CHECKOUT
+elif [[ $MUTTER_SRC ]]; then
+  [[ -d $MUTTER_SRC ]] || die "Mutter source directory does not exist: $MUTTER_SRC"
+  MUTTER_SRC=$(realpath "$MUTTER_SRC")
+fi
+
+if [[ $MUTTER_SRC ]]; then
+  [[ -f $MUTTER_SRC/meson.build ]] ||
+    die "Mutter source directory does not contain meson.build: $MUTTER_SRC"
+  build_mutter "$MUTTER_SRC"
+fi
 
 BUILD_DIR=_build-$TOOLBOX
 
